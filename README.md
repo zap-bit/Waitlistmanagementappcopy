@@ -1,11 +1,36 @@
+# Waitlist Management Boilerplates
 
-  # Waitlist Management App (Copy)
+This repository now includes separate frontend and backend boilerplates:
 
-  This is a code bundle for Waitlist Management App (Copy). The original project is available at https://www.figma.com/design/PvOGyrnaalMki73gXCMR5v/Waitlist-Management-App--Copy-.
+- `Figma/` - untouched Figma-exported source snapshot
+- `frontend/` - runnable frontend app scaffold based on the Figma source
+- `backend/` - API boilerplate aligned with the waitlist API contract
 
-  ## Running the code
+## Frontend
 
-  Run `npm i` to install the dependencies.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-  Run `npm run dev` to start the development server.
-  
+Set optional env vars in `frontend/.env`:
+
+- `VITE_API_BASE_URL` (default: `http://localhost:8000/v1`)
+- `VITE_EVENT_ID` (default: `demo-event`)
+
+## Backend
+
+```bash
+cd backend
+npm install
+npm run dev
+```
+
+The backend exposes `http://localhost:8000/v1` with boilerplate routes for:
+
+- Auth (`/auth/login`)
+- Events (`/events`)
+- Waitlist (`/events/:eventId/waitlist`)
+- Staff (`/events/:eventId/staff/dashboard`, `/staff/promote`, `/staff/seat`)
+- Sync (`/sync`)
