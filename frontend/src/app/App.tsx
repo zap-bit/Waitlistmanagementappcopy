@@ -1,12 +1,23 @@
-import { useState, useEffect } from 'react';
-import { StaffDashboard } from './components/StaffDashboard';
+import { useEffect, useState } from 'react';
+import { Toaster, toast } from 'sonner';
 import { AttendeeView } from './components/AttendeeView';
-import { Users, ClipboardList } from 'lucide-react';
-import { Toaster } from 'sonner';
+import { Login } from './components/Login';
+import { Signup } from './components/Signup';
+import { StaffDashboard } from './components/StaffDashboard';
+import { Welcome } from './components/Welcome';
 import { Table } from './components/TableGrid';
+import {
+  getStoredUser,
+  login as authLogin,
+  logout as authLogout,
+  signupBusiness as authSignupBusiness,
+  signupUser as authSignupUser,
+  User,
+} from './utils/auth';
 import { apiClient } from '../api/client';
 
 type Role = 'staff' | 'attendee' | null;
+type AuthScreen = 'welcome' | 'login' | 'signup' | null;
 
 export interface WaitlistEntry {
   id: string;
@@ -16,6 +27,7 @@ export interface WaitlistEntry {
   estimatedWait: number;
   specialRequests?: string;
   type: 'reservation' | 'waitlist';
+  eventId?: string;
 }
 
 const getInitialWaitlist = (): WaitlistEntry[] => {
@@ -27,73 +39,20 @@ const getInitialWaitlist = (): WaitlistEntry[] => {
         return parsed.map((entry: any) => ({
           ...entry,
           joinedAt: new Date(entry.joinedAt),
-          type: entry.type || 'waitlist', // Default to 'waitlist' if type is missing
+          type: entry.type || 'waitlist',
         }));
       } catch (e) {
         console.error('Error loading waitlist from localStorage:', e);
       }
     }
   }
-  // Default demo data
+
   return [
-    {
-      id: '1',
-      name: 'Sarah Johnson',
-      partySize: 4,
-      joinedAt: new Date(Date.now() - 15 * 60000),
-      estimatedWait: 25,
-      type: 'waitlist' as const,
-    },
-    {
-      id: '2',
-      name: 'Michael Chen',
-      partySize: 2,
-      joinedAt: new Date(Date.now() - 10 * 60000),
-      estimatedWait: 20,
-      type: 'reservation' as const,
-    },
-    {
-      id: '3',
-      name: 'Emily Rodriguez',
-      partySize: 6,
-      joinedAt: new Date(Date.now() - 8 * 60000),
-      estimatedWait: 30,
-      type: 'waitlist' as const,
-    },
-    {
-      id: '4',
-      name: 'David Thompson',
-      partySize: 3,
-      joinedAt: new Date(Date.now() - 5 * 60000),
-      estimatedWait: 15,
-      type: 'reservation' as const,
-    },
-    {
-      id: '5',
-      name: 'Jessica Lee',
-      partySize: 2,
-      joinedAt: new Date(Date.now() - 3 * 60000),
-      estimatedWait: 12,
-      type: 'waitlist' as const,
-    },
+    { id: '1', name: 'Sarah Johnson', partySize: 4, joinedAt: new Date(Date.now() - 15 * 60000), estimatedWait: 25, type: 'waitlist' },
+    { id: '2', name: 'Michael Chen', partySize: 2, joinedAt: new Date(Date.now() - 10 * 60000), estimatedWait: 20, type: 'reservation' },
+    { id: '3', name: 'Emily Rodriguez', partySize: 6, joinedAt: new Date(Date.now() - 8 * 60000), estimatedWait: 30, type: 'waitlist' },
   ];
 };
-
-
-const mapApiEntryToUi = (entry: any): WaitlistEntry => ({
-  id: entry.id,
-  name: entry.name,
-  partySize: entry.partySize,
-  joinedAt: new Date(entry.joinedAt),
-  estimatedWait: entry.estimatedWait,
-  specialRequests: entry.specialRequests,
-  type: entry.type || 'waitlist',
-});
-
-const mapApiTableToUi = (table: any): Table => ({
-  ...table,
-  seatedAt: table.seatedAt ? new Date(table.seatedAt) : undefined,
-});
 
 const getInitialTables = (): Table[] => {
   if (typeof window !== 'undefined') {
@@ -101,7 +60,6 @@ const getInitialTables = (): Table[] => {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Convert date strings back to Date objects
         return parsed.map((table: any) => ({
           ...table,
           seatedAt: table.seatedAt ? new Date(table.seatedAt) : undefined,
@@ -111,18 +69,16 @@ const getInitialTables = (): Table[] => {
       }
     }
   }
-  // Default tables
+
   const initialTables: Table[] = [];
   const defaultCapacities = [2, 2, 4, 4, 2, 4, 6, 6, 4, 4, 6, 8];
   const cols = 4;
-  
+
   for (let i = 0; i < 12; i++) {
-    const row = Math.floor(i / cols);
-    const col = i % cols;
     initialTables.push({
       id: i + 1,
-      row,
-      col,
+      row: Math.floor(i / cols),
+      col: i % cols,
       name: `Table ${i + 1}`,
       capacity: defaultCapacities[i] || 4,
       occupied: false,
@@ -131,28 +87,69 @@ const getInitialTables = (): Table[] => {
   return initialTables;
 };
 
+const mapApiEntryToUi = (entry: any): WaitlistEntry => ({
+  id: entry.id,
+  name: entry.name,
+  partySize: entry.partySize,
+  joinedAt: new Date(entry.joinedAt),
+  estimatedWait: entry.estimatedWait,
+  specialRequests: entry.specialRequests,
+  type: entry.type || 'waitlist',
+  eventId: entry.eventId,
+});
+
+const mapApiTableToUi = (table: any): Table => ({
+  ...table,
+  seatedAt: table.seatedAt ? new Date(table.seatedAt) : undefined,
+});
+
 export default function App() {
-  const [selectedRole, setSelectedRole] = useState<Role>(null);
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>(getInitialWaitlist);
   const [tables, setTables] = useState<Table[]>(getInitialTables);
+  const [authScreen, setAuthScreen] = useState<AuthScreen>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [selectedRole, setSelectedRole] = useState<Role>(null);
 
-  // Persist waitlist to localStorage whenever it changes
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('waitlist', JSON.stringify(waitlist));
-    }
+    const initializeUser = async () => {
+      const storedUser = getStoredUser();
+      if (storedUser) {
+        setUser(storedUser);
+        setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
+        return;
+      }
+
+      try {
+        const me = await apiClient.getMe();
+        if (me.user) {
+          const apiUser: User = {
+            id: me.user.id,
+            email: me.user.email,
+            name: me.user.name,
+            role: me.user.role,
+            businessId: me.user.businessId,
+          };
+          setUser(apiUser);
+          setSelectedRole(apiUser.role === 'staff' ? 'staff' : 'attendee');
+          return;
+        }
+      } catch {
+        // no auth session available, continue to welcome
+      }
+
+      setAuthScreen('welcome');
+    };
+
+    initializeUser();
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('waitlist', JSON.stringify(waitlist));
   }, [waitlist]);
 
-  // Persist tables to localStorage whenever they change
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('tables', JSON.stringify(tables));
-    }
+    localStorage.setItem('tables', JSON.stringify(tables));
   }, [tables]);
-
-  const handleLogout = () => {
-    setSelectedRole(null);
-  };
 
   useEffect(() => {
     const bootstrapFromApi = async () => {
@@ -168,7 +165,90 @@ export default function App() {
     bootstrapFromApi();
   }, []);
 
-  const addToWaitlist = async (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist') => {
+  const handleLogout = () => {
+    setSelectedRole(null);
+    apiClient.logout();
+    authLogout();
+    setUser(null);
+    setAuthScreen('welcome');
+  };
+
+  const handleLogin = async (email: string, password: string) => {
+    try {
+      const response = await apiClient.login({ email, password });
+      const loggedInUser: User = response.user;
+      setUser(loggedInUser);
+      setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
+      setAuthScreen(null);
+      toast.success(`Welcome back, ${loggedInUser.name}!`);
+      return;
+    } catch {
+      const loggedInUser = authLogin(email, password);
+      if (loggedInUser) {
+        setUser(loggedInUser);
+        setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
+        setAuthScreen(null);
+        toast.success(`Welcome back, ${loggedInUser.name}!`);
+        return;
+      }
+    }
+
+    toast.error('Invalid email or password');
+  };
+
+  const handleSignupUser = async (email: string, password: string, name: string) => {
+    try {
+      const response = await apiClient.signupUser({ email, password, name });
+      const newUser: User = response.user;
+      setUser(newUser);
+      setSelectedRole('attendee');
+      setAuthScreen(null);
+      toast.success(`Welcome, ${newUser.name}!`);
+      return;
+    } catch {
+      const newUser = authSignupUser(email, password, name);
+      if (newUser) {
+        setUser(newUser);
+        setSelectedRole('attendee');
+        setAuthScreen(null);
+        toast.success(`Welcome, ${newUser.name}!`);
+        return;
+      }
+    }
+
+    toast.error('Email already exists');
+  };
+
+  const handleSignupBusiness = async (email: string, password: string, ownerName: string, businessName: string) => {
+    try {
+      const response = await apiClient.signupBusiness({ email, password, ownerName, businessName });
+      const newUser: User = response.user;
+      setUser(newUser);
+      setSelectedRole('staff');
+      setAuthScreen(null);
+      toast.success(`Welcome, ${newUser.name}! Your business "${businessName}" has been created.`);
+      return;
+    } catch {
+      const newUser = authSignupBusiness(email, password, ownerName, businessName);
+      if (newUser) {
+        setUser(newUser);
+        setSelectedRole('staff');
+        setAuthScreen(null);
+        toast.success(`Welcome, ${newUser.name}! Your business "${businessName}" has been created.`);
+        return;
+      }
+    }
+
+    toast.error('Email already exists');
+  };
+
+  const addToWaitlist = async (
+    name: string,
+    partySize: number,
+    specialRequests?: string,
+    type: 'reservation' | 'waitlist' = 'waitlist',
+    eventId?: string,
+  ) => {
     try {
       const created = await apiClient.addToWaitlist({ name, partySize, specialRequests, type });
       const mapped = mapApiEntryToUi(created);
@@ -183,6 +263,7 @@ export default function App() {
         estimatedWait: 15 + waitlist.length * 5,
         specialRequests,
         type,
+        eventId,
       };
       setWaitlist((prev) => [...prev, newEntry]);
       return newEntry.id;
@@ -192,20 +273,54 @@ export default function App() {
   const removeFromWaitlist = async (id: string) => {
     try {
       await apiClient.removeWaitlistEntry(id);
-    } catch {}
+    } catch {
+      // local fallback still removes from client state
+    }
     setWaitlist((prev) => prev.filter((e) => e.id !== id));
   };
+
+  if (!user) {
+    if (authScreen === 'welcome') {
+      return (
+        <>
+          <Welcome onNavigateToLogin={() => setAuthScreen('login')} onNavigateToSignup={() => setAuthScreen('signup')} />
+          <Toaster position="top-center" />
+        </>
+      );
+    }
+
+    if (authScreen === 'login') {
+      return (
+        <>
+          <Login
+            onLogin={handleLogin}
+            onBackToWelcome={() => setAuthScreen('welcome')}
+            onSwitchToSignup={() => setAuthScreen('signup')}
+          />
+          <Toaster position="top-center" />
+        </>
+      );
+    }
+
+    if (authScreen === 'signup') {
+      return (
+        <>
+          <Signup
+            onSignupUser={handleSignupUser}
+            onSignupBusiness={handleSignupBusiness}
+            onBackToWelcome={() => setAuthScreen('welcome')}
+            onSwitchToLogin={() => setAuthScreen('login')}
+          />
+          <Toaster position="top-center" />
+        </>
+      );
+    }
+  }
 
   if (selectedRole === 'staff') {
     return (
       <>
-        <StaffDashboard 
-          onLogout={handleLogout} 
-          waitlist={waitlist}
-          setWaitlist={setWaitlist}
-          tables={tables}
-          setTables={setTables}
-        />
+        <StaffDashboard onLogout={handleLogout} waitlist={waitlist} setWaitlist={setWaitlist} tables={tables} setTables={setTables} />
         <Toaster position="top-center" />
       </>
     );
@@ -214,7 +329,7 @@ export default function App() {
   if (selectedRole === 'attendee') {
     return (
       <>
-        <AttendeeView 
+        <AttendeeView
           onLogout={handleLogout}
           waitlist={waitlist}
           addToWaitlist={addToWaitlist}
@@ -227,59 +342,5 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex flex-col items-center justify-center p-6 max-w-md mx-auto">
-      <div className="w-full max-w-sm space-y-8">
-        <div className="text-center">
-          <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-            <ClipboardList className="w-10 h-10 text-white" />
-          </div>
-          <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Waitlist Manager
-          </h1>
-          <p className="text-gray-600">
-            Select your role to continue
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          <button
-            onClick={() => setSelectedRole('staff')}
-            className="w-full bg-black hover:bg-gray-800 text-white py-6 px-6 rounded-2xl font-semibold flex items-center justify-between gap-4 shadow-lg active:scale-95 transition-transform group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center group-hover:bg-white/20 transition-colors">
-                <ClipboardList className="w-6 h-6" />
-              </div>
-              <div className="text-left">
-                <div className="text-lg">Staff Dashboard</div>
-                <div className="text-sm text-gray-400">Manage waitlist & capacity</div>
-              </div>
-            </div>
-            <div className="text-2xl">→</div>
-          </button>
-
-          <button
-            onClick={() => setSelectedRole('attendee')}
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white py-6 px-6 rounded-2xl font-semibold flex items-center justify-between gap-4 shadow-lg active:scale-95 transition-transform group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center group-hover:bg-white/30 transition-colors">
-                <Users className="w-6 h-6" />
-              </div>
-              <div className="text-left">
-                <div className="text-lg">Attendee View</div>
-                <div className="text-sm text-white/80">Join & track your position</div>
-              </div>
-            </div>
-            <div className="text-2xl">→</div>
-          </button>
-        </div>
-
-        <div className="text-center text-sm text-gray-500 pt-4">
-          <p>Demo Mode • All data is stored locally</p>
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 }

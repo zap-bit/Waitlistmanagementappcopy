@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { EventModel, WaitlistEntry } from '../types/contracts.js';
+import type { BusinessModel, EventModel, UserModel, WaitlistEntry } from '../types/contracts.js';
 
 const makeTables = (totalTables = 12) => {
   const cols = 4;
@@ -14,16 +14,20 @@ const makeTables = (totalTables = 12) => {
 };
 
 const now = new Date();
+const demoBusinessId = 'biz-demo';
 
 const demoEvent: EventModel = {
   id: 'demo-event',
+  businessId: demoBusinessId,
   name: 'Figma Demo Restaurant',
-  eventType: 'INDOOR_TABLES',
-  maxCapacity: 100,
-  totalTables: 12,
-  startTime: new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
-  endTime: new Date(now.getTime() + 5 * 60 * 60 * 1000).toISOString(),
-  offlineEnabled: true,
+  type: 'table-based',
+  status: 'active',
+  createdAt: now.toISOString(),
+  numberOfTables: 12,
+  averageTableSize: 4,
+  reservationDuration: 90,
+  noShowPolicy: 'Hold table for 15 minutes',
+  currentFilledTables: 1,
   tables: makeTables(12),
   waitlist: [
     {
@@ -40,8 +44,48 @@ const demoEvent: EventModel = {
   ],
 };
 
+demoEvent.tables[0].occupied = true;
+demoEvent.tables[0].guestName = 'Michael Chen';
+demoEvent.tables[0].partySize = 2;
+demoEvent.tables[0].seatedAt = new Date(now.getTime() - 12 * 60 * 1000).toISOString();
+
+const demoBusiness: BusinessModel = {
+  id: demoBusinessId,
+  name: 'Figma Demo Restaurant',
+  ownerId: 'staff-demo',
+};
+
+const demoStaffUser: UserModel = {
+  id: 'staff-demo',
+  email: 'admin@demo.com',
+  name: 'Demo Manager',
+  role: 'staff',
+  businessId: demoBusiness.id,
+};
+
+const demoAttendeeUser: UserModel = {
+  id: 'user-demo',
+  email: 'guest@demo.com',
+  name: 'Demo Guest',
+  role: 'user',
+};
+
 export const db = {
   events: new Map<string, EventModel>([[demoEvent.id, demoEvent]]),
+  users: new Map<string, UserModel>([
+    [demoStaffUser.id, demoStaffUser],
+    [demoAttendeeUser.id, demoAttendeeUser],
+  ]),
+  usersByEmail: new Map<string, string>([
+    [demoStaffUser.email.toLowerCase(), demoStaffUser.id],
+    [demoAttendeeUser.email.toLowerCase(), demoAttendeeUser.id],
+  ]),
+  passwords: new Map<string, string>([
+    [demoStaffUser.id, 'password123'],
+    [demoAttendeeUser.id, 'password123'],
+  ]),
+  businesses: new Map<string, BusinessModel>([[demoBusiness.id, demoBusiness]]),
+  tokens: new Map<string, string>(),
 };
 
 export function recalcQueuePositions(eventId: string) {
@@ -72,6 +116,11 @@ export function addWaitlistEntry(eventId: string, payload: Pick<WaitlistEntry, '
   };
 
   event.waitlist.push(entry);
+
+  if (event.type === 'capacity-based') {
+    event.currentCount += payload.partySize;
+  }
+
   recalcQueuePositions(eventId);
   return entry;
 }
