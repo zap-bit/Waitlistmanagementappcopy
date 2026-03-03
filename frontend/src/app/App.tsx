@@ -1,12 +1,23 @@
 import { useState, useEffect } from 'react';
 import { StaffDashboard } from './components/StaffDashboard';
 import { AttendeeView } from './components/AttendeeView';
+import { Welcome } from './components/Welcome';
+import { Login } from './components/Login';
+import { Signup } from './components/Signup';
 import { Users, ClipboardList } from 'lucide-react';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { Table } from './components/TableGrid';
-import { apiClient } from '../api/client';
+import { 
+  getStoredUser, 
+  login as authLogin, 
+  signupUser as authSignupUser, 
+  signupBusiness as authSignupBusiness,
+  logout as authLogout,
+  User 
+} from './utils/auth';
 
 type Role = 'staff' | 'attendee' | null;
+type AuthScreen = 'welcome' | 'login' | 'signup' | null;
 
 export interface WaitlistEntry {
   id: string;
@@ -16,6 +27,7 @@ export interface WaitlistEntry {
   estimatedWait: number;
   specialRequests?: string;
   type: 'reservation' | 'waitlist';
+  eventId?: string;
 }
 
 const getInitialWaitlist = (): WaitlistEntry[] => {
@@ -79,22 +91,6 @@ const getInitialWaitlist = (): WaitlistEntry[] => {
   ];
 };
 
-
-const mapApiEntryToUi = (entry: any): WaitlistEntry => ({
-  id: entry.id,
-  name: entry.name,
-  partySize: entry.partySize,
-  joinedAt: new Date(entry.joinedAt),
-  estimatedWait: entry.estimatedWait,
-  specialRequests: entry.specialRequests,
-  type: entry.type || 'waitlist',
-});
-
-const mapApiTableToUi = (table: any): Table => ({
-  ...table,
-  seatedAt: table.seatedAt ? new Date(table.seatedAt) : undefined,
-});
-
 const getInitialTables = (): Table[] => {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('tables');
@@ -132,9 +128,23 @@ const getInitialTables = (): Table[] => {
 };
 
 export default function App() {
-  const [selectedRole, setSelectedRole] = useState<Role>(null);
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>(getInitialWaitlist);
   const [tables, setTables] = useState<Table[]>(getInitialTables);
+  const [authScreen, setAuthScreen] = useState<AuthScreen>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [selectedRole, setSelectedRole] = useState<Role>(null);
+
+  // Check for logged in user on mount
+  useEffect(() => {
+    const storedUser = getStoredUser();
+    if (storedUser) {
+      setUser(storedUser);
+      // Auto-select role based on user type
+      setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
+    } else {
+      setAuthScreen('welcome');
+    }
+  }, []);
 
   // Persist waitlist to localStorage whenever it changes
   useEffect(() => {
@@ -152,50 +162,109 @@ export default function App() {
 
   const handleLogout = () => {
     setSelectedRole(null);
+    authLogout();
+    setUser(null);
+    setAuthScreen('welcome');
   };
 
-  useEffect(() => {
-    const bootstrapFromApi = async () => {
-      try {
-        const dashboard = await apiClient.getDashboard();
-        setWaitlist(dashboard.waitlist.map(mapApiEntryToUi));
-        setTables(dashboard.tables.map(mapApiTableToUi));
-      } catch (error) {
-        console.warn('Falling back to local/demo data; backend unavailable.', error);
-      }
-    };
-
-    bootstrapFromApi();
-  }, []);
-
-  const addToWaitlist = async (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist') => {
-    try {
-      const created = await apiClient.addToWaitlist({ name, partySize, specialRequests, type });
-      const mapped = mapApiEntryToUi(created);
-      setWaitlist((prev) => [...prev, mapped]);
-      return mapped.id;
-    } catch {
-      const newEntry: WaitlistEntry = {
-        id: Date.now().toString(),
-        name,
-        partySize,
-        joinedAt: new Date(),
-        estimatedWait: 15 + waitlist.length * 5,
-        specialRequests,
-        type,
-      };
-      setWaitlist((prev) => [...prev, newEntry]);
-      return newEntry.id;
+  const handleLogin = (email: string, password: string) => {
+    const loggedInUser = authLogin(email, password);
+    if (loggedInUser) {
+      setUser(loggedInUser);
+      setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
+      setAuthScreen(null);
+      toast.success(`Welcome back, ${loggedInUser.name}!`);
+    } else {
+      toast.error('Invalid email or password');
     }
   };
 
-  const removeFromWaitlist = async (id: string) => {
-    try {
-      await apiClient.removeWaitlistEntry(id);
-    } catch {}
+  const handleSignupUser = (email: string, password: string, name: string) => {
+    const newUser = authSignupUser(email, password, name);
+    if (newUser) {
+      setUser(newUser);
+      setSelectedRole('attendee');
+      setAuthScreen(null);
+      toast.success(`Welcome, ${newUser.name}!`);
+    } else {
+      toast.error('Email already exists');
+    }
+  };
+
+  const handleSignupBusiness = (email: string, password: string, ownerName: string, businessName: string) => {
+    const newUser = authSignupBusiness(email, password, ownerName, businessName);
+    if (newUser) {
+      setUser(newUser);
+      setSelectedRole('staff');
+      setAuthScreen(null);
+      toast.success(`Welcome, ${newUser.name}! Your business "${businessName}" has been created.`);
+    } else {
+      toast.error('Email already exists');
+    }
+  };
+
+  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string) => {
+    const newEntry: WaitlistEntry = {
+      id: Date.now().toString(),
+      name,
+      partySize,
+      joinedAt: new Date(),
+      estimatedWait: 15 + waitlist.length * 5,
+      specialRequests,
+      type,
+      eventId,
+    };
+    setWaitlist((prev) => [...prev, newEntry]);
+    return newEntry.id;
+  };
+
+  const removeFromWaitlist = (id: string) => {
     setWaitlist((prev) => prev.filter((e) => e.id !== id));
   };
 
+  // Show auth screens if not logged in
+  if (!user) {
+    if (authScreen === 'welcome') {
+      return (
+        <>
+          <Welcome
+            onNavigateToLogin={() => setAuthScreen('login')}
+            onNavigateToSignup={() => setAuthScreen('signup')}
+          />
+          <Toaster position="top-center" />
+        </>
+      );
+    }
+
+    if (authScreen === 'login') {
+      return (
+        <>
+          <Login
+            onLogin={handleLogin}
+            onBackToWelcome={() => setAuthScreen('welcome')}
+            onSwitchToSignup={() => setAuthScreen('signup')}
+          />
+          <Toaster position="top-center" />
+        </>
+      );
+    }
+
+    if (authScreen === 'signup') {
+      return (
+        <>
+          <Signup
+            onSignupUser={handleSignupUser}
+            onSignupBusiness={handleSignupBusiness}
+            onBackToWelcome={() => setAuthScreen('welcome')}
+            onSwitchToLogin={() => setAuthScreen('login')}
+          />
+          <Toaster position="top-center" />
+        </>
+      );
+    }
+  }
+
+  // User is logged in - show appropriate dashboard
   if (selectedRole === 'staff') {
     return (
       <>
@@ -227,59 +296,6 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex flex-col items-center justify-center p-6 max-w-md mx-auto">
-      <div className="w-full max-w-sm space-y-8">
-        <div className="text-center">
-          <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-            <ClipboardList className="w-10 h-10 text-white" />
-          </div>
-          <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Waitlist Manager
-          </h1>
-          <p className="text-gray-600">
-            Select your role to continue
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          <button
-            onClick={() => setSelectedRole('staff')}
-            className="w-full bg-black hover:bg-gray-800 text-white py-6 px-6 rounded-2xl font-semibold flex items-center justify-between gap-4 shadow-lg active:scale-95 transition-transform group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center group-hover:bg-white/20 transition-colors">
-                <ClipboardList className="w-6 h-6" />
-              </div>
-              <div className="text-left">
-                <div className="text-lg">Staff Dashboard</div>
-                <div className="text-sm text-gray-400">Manage waitlist & capacity</div>
-              </div>
-            </div>
-            <div className="text-2xl">→</div>
-          </button>
-
-          <button
-            onClick={() => setSelectedRole('attendee')}
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white py-6 px-6 rounded-2xl font-semibold flex items-center justify-between gap-4 shadow-lg active:scale-95 transition-transform group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center group-hover:bg-white/30 transition-colors">
-                <Users className="w-6 h-6" />
-              </div>
-              <div className="text-left">
-                <div className="text-lg">Attendee View</div>
-                <div className="text-sm text-white/80">Join & track your position</div>
-              </div>
-            </div>
-            <div className="text-2xl">→</div>
-          </button>
-        </div>
-
-        <div className="text-center text-sm text-gray-500 pt-4">
-          <p>Demo Mode • All data is stored locally</p>
-        </div>
-      </div>
-    </div>
-  );
+  // Fallback (shouldn't happen)
+  return null;
 }

@@ -2,9 +2,23 @@ import { useState, useEffect } from 'react';
 import { CircularProgress } from './CircularProgress';
 import { StatusBar } from './StatusBar';
 import { TableGrid, Table } from './TableGrid';
-import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X } from 'lucide-react';
+import { CreateEventModal } from './CreateEventModal';
+import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
+import { Event, getStoredEvents, addEvent, deleteEvent } from '../utils/events';
+import { getStoredUser } from '../utils/auth';
+
+interface Attraction {
+  id: string;
+  name: string;
+  waitTime: number;
+  queueSize: number;
+  queueCapacity: number;
+  throughput: number;
+  status: 'open' | 'closed' | 'delayed';
+  autoCalculateWait: boolean;
+}
 
 interface StaffDashboardProps {
   onLogout: () => void;
@@ -42,16 +56,27 @@ const getStoredBoolean = (key: string, defaultValue: boolean): boolean => {
   return defaultValue;
 };
 
+const calculateWaitTime = (queueSize: number, throughput: number): number => {
+  if (throughput === 0) return 0;
+  return Math.round((queueSize / throughput) * 60);
+};
+
 export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables }: StaffDashboardProps) {
   const [currentCapacity, setCurrentCapacity] = useState(() => getStoredNumber('currentCapacity', 45));
-  const [maxCapacity] = useState(100);
+  const [maxCapacity, setMaxCapacity] = useState(() => getStoredNumber('maxCapacity', 100));
   const [isOnline, setIsOnline] = useState(() => getStoredBoolean('isOnline', true));
   const [isSyncing, setIsSyncing] = useState(false);
-  const [currentPage, setCurrentPage] = useState<'waitlist' | 'capacity'>('waitlist');
+  const [currentPage, setCurrentPage] = useState<'home' | 'waitlist' | 'capacity'>('home');
   const [listView, setListView] = useState<'waitlist' | 'reservation'>('waitlist');
   const [waitlistSubPage, setWaitlistSubPage] = useState<'view' | 'settings'>('view');
   const [menuOpen, setMenuOpen] = useState(false);
   const [totalTables, setTotalTables] = useState(() => getStoredNumber('totalTables', 12));
+  const [showCreateEventModal, setShowCreateEventModal] = useState(false);
+  const [events, setEvents] = useState<Event[]>(getStoredEvents);
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [attractions, setAttractions] = useState<Attraction[]>([]);
+  const [showAttractionModal, setShowAttractionModal] = useState(false);
+  const [editingAttraction, setEditingAttraction] = useState<Attraction | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -67,15 +92,19 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      localStorage.setItem('maxCapacity', JSON.stringify(maxCapacity));
+    }
+  }, [maxCapacity]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
       localStorage.setItem('isOnline', JSON.stringify(isOnline));
     }
   }, [isOnline]);
 
-  const handleIncreaseCapacity = () => {
-    if (currentCapacity < maxCapacity) {
-      setCurrentCapacity((prev) => prev + 1);
-      simulateSync();
-    }
+  const simulateSync = () => {
+    setIsSyncing(true);
+    setTimeout(() => setIsSyncing(false), 1000);
   };
 
   const handleDecreaseCapacity = () => {
@@ -85,211 +114,25 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
-  const parseSpecialRequests = (requests?: string) => {
-    if (!requests) return { requestedTableId: null, nearGuestName: null };
-    
-    const lowerRequests = requests.toLowerCase();
-    
-    // Check for specific table request (e.g., "table 5" or "Table 5" or "#5")
-    const tableMatch = lowerRequests.match(/table\s*(\d+)|#\s*(\d+)/);
-    const requestedTableId = tableMatch ? parseInt(tableMatch[1] || tableMatch[2]) : null;
-    
-    // Check for "near [name]" request
-    const nearMatch = requests.match(/near\s+(.+)/i);
-    const nearGuestName = nearMatch ? nearMatch[1].trim() : null;
-    
-    return { requestedTableId, nearGuestName };
-  };
-
-  const findNearbyTable = (referenceTable: Table) => {
-    // Find tables adjacent or diagonal to the reference table
-    const nearbyTables = tables.filter((t) => {
-      if (t.occupied) return false;
-      const rowDiff = Math.abs(t.row - referenceTable.row);
-      const colDiff = Math.abs(t.col - referenceTable.col);
-      // Adjacent or diagonal (within 1 row and 1 column)
-      return rowDiff <= 1 && colDiff <= 1 && !(rowDiff === 0 && colDiff === 0);
-    });
-    
-    return nearbyTables.length > 0 ? nearbyTables[0] : null;
+  const handleIncreaseCapacity = () => {
+    if (currentCapacity < maxCapacity) {
+      setCurrentCapacity((prev) => prev + 1);
+      simulateSync();
+    }
   };
 
   const handlePromote = (id: string) => {
     const entry = waitlist.find((e) => e.id === id);
     if (!entry) return;
 
-    let selectedTable: Table | undefined = undefined;
-    const { requestedTableId, nearGuestName } = parseSpecialRequests(entry.specialRequests);
-
-    // Priority 1: Check if specific table was requested
-    if (requestedTableId) {
-      const requestedTable = tables.find((t) => t.id === requestedTableId);
-      if (requestedTable && !requestedTable.occupied && requestedTable.capacity >= entry.partySize) {
-        selectedTable = requestedTable;
-        toast.success(`${entry.name} seated at requested ${requestedTable.name}`);
-      } else if (requestedTable && requestedTable.occupied) {
-        toast.info(`Requested ${requestedTable.name} is occupied. Finding alternative...`);
-      } else if (requestedTable && requestedTable.capacity < entry.partySize) {
-        toast.info(`Requested ${requestedTable.name} is too small. Finding alternative...`);
-      }
-    }
-
-    // Priority 2: Check if they want to sit near another guest
-    if (!selectedTable && nearGuestName) {
-      const nearGuestTable = tables.find((t) => 
-        t.occupied && t.guestName?.toLowerCase().includes(nearGuestName.toLowerCase())
-      );
-      
-      if (nearGuestTable) {
-        const nearbyTable = findNearbyTable(nearGuestTable);
-        if (nearbyTable && nearbyTable.capacity >= entry.partySize) {
-          selectedTable = nearbyTable;
-          toast.success(`${entry.name} seated near ${nearGuestTable.guestName} at ${nearbyTable.name}`);
-        } else {
-          toast.info(`No tables available near ${nearGuestTable.guestName}. Finding alternative...`);
-        }
-      } else {
-        toast.info(`Guest "${nearGuestName}" not found or not yet seated.`);
-      }
-    }
-
-    // Priority 3: Find first available table that can accommodate the party size
-    if (!selectedTable) {
-      selectedTable = tables.find((t) => !t.occupied && t.capacity >= entry.partySize);
-    }
-    
-    if (!selectedTable) {
-      toast.error(`No tables available for party of ${entry.partySize}`);
-      return;
-    }
-
-    // Assign guest to table
-    setTables((prev) =>
-      prev.map((t) =>
-        t.id === selectedTable!.id
-          ? {
-              ...t,
-              occupied: true,
-              guestName: entry.name,
-              partySize: entry.partySize,
-              seatedAt: new Date(),
-            }
-          : t
-      )
+    const availableTable = tables.find(
+      (t) => !t.occupied && t.capacity >= entry.partySize
     );
 
-    // Remove from waitlist
-    setWaitlist((prev) => prev.filter((e) => e.id !== id));
-    
-    if (!requestedTableId && !nearGuestName) {
-      toast.success(`${entry.name} seated at ${selectedTable.name}`);
-    }
-    simulateSync();
-  };
-
-  const handleNoShow = (id: string) => {
-    setWaitlist((prev) => prev.filter((entry) => entry.id !== id));
-    simulateSync();
-  };
-
-  const simulateSync = () => {
-    setIsSyncing(true);
-    setTimeout(() => setIsSyncing(false), 1500);
-  };
-
-  const handleClearTable = (tableId: number) => {
-    const table = tables.find((t) => t.id === tableId);
-    if (!table) return;
-
-    setTables((prev) =>
-      prev.map((t) =>
-        t.id === tableId
-          ? {
-              ...t,
-              occupied: false,
-              guestName: undefined,
-              partySize: undefined,
-              seatedAt: undefined,
-            }
-          : t
-      )
-    );
-
-    toast.success(`Table ${tableId} cleared`);
-    simulateSync();
-  };
-
-  const handleSeatAll = () => {
-    const reservations = waitlist.filter((e) => e.type === 'reservation');
-    
-    if (reservations.length === 0) {
-      toast.info('No reservations to seat');
-      return;
-    }
-
-    // Sort reservations: those with special requests first
-    const sortedReservations = [...reservations].sort((a, b) => {
-      const aHasRequests = a.specialRequests && a.specialRequests.trim().length > 0;
-      const bHasRequests = b.specialRequests && b.specialRequests.trim().length > 0;
-      if (aHasRequests && !bHasRequests) return -1;
-      if (!aHasRequests && bHasRequests) return 1;
-      return 0;
-    });
-
-    let seatedCount = 0;
-    let failedCount = 0;
-    
-    // Use a local copy of tables that we'll update as we process each reservation
-    let updatedTables = [...tables];
-    const seatedIds: string[] = [];
-
-    // Helper function to find nearby table in local state
-    const findNearbyTableLocal = (referenceTable: Table, localTables: Table[]) => {
-      const nearbyTables = localTables.filter((t) => {
-        if (t.occupied) return false;
-        const rowDiff = Math.abs(t.row - referenceTable.row);
-        const colDiff = Math.abs(t.col - referenceTable.col);
-        return rowDiff <= 1 && colDiff <= 1 && !(rowDiff === 0 && colDiff === 0);
-      });
-      return nearbyTables.length > 0 ? nearbyTables[0] : null;
-    };
-
-    // Process each reservation
-    sortedReservations.forEach((entry) => {
-      let selectedTable: Table | undefined = undefined;
-      const { requestedTableId, nearGuestName } = parseSpecialRequests(entry.specialRequests);
-
-      // Priority 1: Check if specific table was requested
-      if (requestedTableId) {
-        const requestedTable = updatedTables.find((t) => t.id === requestedTableId);
-        if (requestedTable && !requestedTable.occupied && requestedTable.capacity >= entry.partySize) {
-          selectedTable = requestedTable;
-        }
-      }
-
-      // Priority 2: Check if they want to sit near another guest
-      if (!selectedTable && nearGuestName) {
-        const nearGuestTable = updatedTables.find((t) => 
-          t.occupied && t.guestName?.toLowerCase().includes(nearGuestName.toLowerCase())
-        );
-        
-        if (nearGuestTable) {
-          const nearbyTable = findNearbyTableLocal(nearGuestTable, updatedTables);
-          if (nearbyTable && nearbyTable.capacity >= entry.partySize) {
-            selectedTable = nearbyTable;
-          }
-        }
-      }
-
-      // Priority 3: Find first available table that can accommodate the party size
-      if (!selectedTable) {
-        selectedTable = updatedTables.find((t) => !t.occupied && t.capacity >= entry.partySize);
-      }
-      
-      if (selectedTable) {
-        // Update the local tables array
-        updatedTables = updatedTables.map((t) =>
-          t.id === selectedTable!.id
+    if (availableTable) {
+      setTables(
+        tables.map((t) =>
+          t.id === availableTable.id
             ? {
                 ...t,
                 occupied: true,
@@ -298,148 +141,169 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                 seatedAt: new Date(),
               }
             : t
-        );
+        )
+      );
+      setWaitlist(waitlist.filter((e) => e.id !== id));
+      toast.success(`${entry.name} seated at ${availableTable.name}`, {
+        description: `Party of ${entry.partySize}`,
+      });
+      simulateSync();
+    } else {
+      toast.error('No available tables for this party size', {
+        description: `Need table for ${entry.partySize} guests`,
+      });
+    }
+  };
 
-        seatedIds.push(entry.id);
-        seatedCount++;
-      } else {
-        failedCount++;
+  const handleSeatAll = () => {
+    const reservations = waitlist.filter((e) => e.type === 'reservation');
+    if (reservations.length === 0) return;
+
+    let seatedCount = 0;
+    const newTables = [...tables];
+    const newWaitlist = [...waitlist];
+
+    reservations.forEach((entry) => {
+      const availableTableIndex = newTables.findIndex(
+        (t) => !t.occupied && t.capacity >= entry.partySize
+      );
+
+      if (availableTableIndex !== -1) {
+        newTables[availableTableIndex] = {
+          ...newTables[availableTableIndex],
+          occupied: true,
+          guestName: entry.name,
+          partySize: entry.partySize,
+          seatedAt: new Date(),
+        };
+        const entryIndex = newWaitlist.findIndex((e) => e.id === entry.id);
+        if (entryIndex !== -1) {
+          newWaitlist.splice(entryIndex, 1);
+          seatedCount++;
+        }
       }
     });
 
-    // Update state once with all changes
+    setTables(newTables);
+    setWaitlist(newWaitlist);
+    
     if (seatedCount > 0) {
-      setTables(updatedTables);
-      setWaitlist((prev) => prev.filter((e) => !seatedIds.includes(e.id)));
-      toast.success(`Seated ${seatedCount} reservation${seatedCount > 1 ? 's' : ''}`);
+      toast.success(`Seated ${seatedCount} ${seatedCount === 1 ? 'guest' : 'groups'}`);
+      simulateSync();
+    } else {
+      toast.error('No available tables for any reservations');
     }
-    if (failedCount > 0) {
-      toast.warning(`${failedCount} reservation${failedCount > 1 ? 's' : ''} could not be seated (no available tables)`);
-    }
+  };
+
+  const handleNoShow = (id: string) => {
+    const entry = waitlist.find((e) => e.id === id);
+    if (!entry) return;
+
+    setWaitlist(waitlist.filter((e) => e.id !== id));
+    toast.error(`${entry.name} marked as no-show`);
+    simulateSync();
+  };
+
+  const handleClearTable = (tableId: number) => {
+    const table = tables.find((t) => t.id === tableId);
+    if (!table) return;
+
+    setTables(
+      tables.map((t) =>
+        t.id === tableId
+          ? { ...t, occupied: false, guestName: undefined, partySize: undefined, seatedAt: undefined }
+          : t
+      )
+    );
+    toast.success(`${table.name} cleared`);
     simulateSync();
   };
 
   const handleClearAllTables = () => {
-    const occupiedCount = tables.filter((t) => t.occupied).length;
-    
-    if (occupiedCount === 0) {
-      toast.info('No occupied tables to clear');
-      return;
+    if (confirm('Clear all tables? This will remove all guests.')) {
+      setTables(
+        tables.map((t) => ({
+          ...t,
+          occupied: false,
+          guestName: undefined,
+          partySize: undefined,
+          seatedAt: undefined,
+        }))
+      );
+      toast.success('All tables cleared');
+      simulateSync();
     }
-
-    setTables((prev) =>
-      prev.map((t) => ({
-        ...t,
-        occupied: false,
-        guestName: undefined,
-        partySize: undefined,
-        seatedAt: undefined,
-      }))
-    );
-
-    toast.success(`Cleared all ${occupiedCount} occupied tables`);
-    simulateSync();
   };
 
   const handleRenameTable = (tableId: number, newName: string) => {
-    setTables((prev) =>
-      prev.map((t) =>
-        t.id === tableId
-          ? { ...t, name: newName }
-          : t
+    setTables(
+      tables.map((t) =>
+        t.id === tableId ? { ...t, name: newName } : t
       )
     );
-    toast.success(`Table renamed to "${newName}"`);
+    toast.success('Table renamed');
     simulateSync();
   };
 
-  const handleUpdateCapacity = (tableId: number, capacity: number) => {
-    setTables((prev) =>
-      prev.map((t) =>
-        t.id === tableId
-          ? { ...t, capacity }
-          : t
+  const handleUpdateCapacity = (tableId: number, newCapacity: number) => {
+    setTables(
+      tables.map((t) =>
+        t.id === tableId ? { ...t, capacity: newCapacity } : t
       )
     );
-    toast.success(`Table capacity updated to ${capacity}`);
+    toast.success('Table capacity updated');
     simulateSync();
   };
 
-  const handleManualOccupy = (tableId: number) => {
-    const table = tables.find((t) => t.id === tableId);
-    if (!table) return;
-
-    setTables((prev) =>
-      prev.map((t) =>
+  const handleManualOccupy = (tableId: number, guestName: string, partySize: number) => {
+    setTables(
+      tables.map((t) =>
         t.id === tableId
-          ? {
-              ...t,
-              occupied: true,
-              guestName: undefined,
-              partySize: undefined,
-              seatedAt: new Date(),
-            }
+          ? { ...t, occupied: true, guestName, partySize, seatedAt: new Date() }
           : t
       )
     );
-
-    toast.success(`${table.name} marked as occupied`);
+    toast.success(`${guestName} seated manually`);
     simulateSync();
   };
 
-  const handleUpdateTableCount = (count: number) => {
-    if (count < 1 || count > 24) return;
+  const handleUpdateTableCount = (newCount: number) => {
+    if (newCount < 1 || newCount > 24) return;
 
-    const cols = 4;
-    const newTables: Table[] = [];
-    const defaultCapacities = [2, 2, 4, 4, 2, 4, 6, 6, 4, 4, 6, 8, 2, 4, 4, 6, 2, 4, 6, 8, 4, 4, 6, 8];
+    const oldCount = tables.length;
+    const newTables = [...tables];
 
-    // Keep existing table data where possible
-    for (let i = 0; i < count; i++) {
-      const existingTable = tables[i];
-      const row = Math.floor(i / cols);
-      const col = i % cols;
-
-      if (existingTable && !existingTable.occupied) {
-        // Preserve existing table settings if not occupied
-        newTables.push({
-          ...existingTable,
-          id: i + 1,
-          row,
-          col,
-        });
-      } else if (existingTable && existingTable.occupied) {
-        // Keep occupied tables as is
-        newTables.push({
-          ...existingTable,
-          id: i + 1,
-          row,
-          col,
-        });
-      } else {
-        // Create new table
+    if (newCount > oldCount) {
+      const cols = 4;
+      for (let i = oldCount; i < newCount; i++) {
+        const row = Math.floor(i / cols);
+        const col = i % cols;
         newTables.push({
           id: i + 1,
           row,
           col,
           name: `Table ${i + 1}`,
-          capacity: defaultCapacities[i] || 4,
+          capacity: 4,
           occupied: false,
         });
       }
+    } else if (newCount < oldCount) {
+      newTables.splice(newCount);
     }
 
+    setTotalTables(newCount);
     setTables(newTables);
-    setTotalTables(count);
-    toast.success(`Table count updated to ${count}`);
+    toast.success(`Table count updated to ${newCount}`);
     simulateSync();
   };
 
   const formatWaitTime = (minutes: number) => {
-    if (minutes < 60) return `${minutes} min`;
+    if (minutes < 60) {
+      return `${minutes} min`;
+    }
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
-    return `${hours}h ${mins}m`;
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
   };
 
   return (
@@ -456,9 +320,11 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
         <div className="flex-1 text-center">
           <h1 className="text-2xl font-bold">Staff Dashboard</h1>
           <p className="text-sm text-gray-400">
-            {currentPage === 'waitlist' 
-              ? (waitlistSubPage === 'settings' ? 'Table Settings' : 'Waitlist Management')
-              : 'Capacity Management'}
+            {currentPage === 'home'
+              ? 'Your Events'
+              : currentPage === 'waitlist' 
+                ? (waitlistSubPage === 'settings' ? 'Table Settings' : selectedEvent?.name || 'Waitlist Management')
+                : selectedEvent?.name || 'Capacity Management'}
           </p>
         </div>
         <button
@@ -471,93 +337,446 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
 
       {menuOpen && (
         <div className="bg-white border-b border-gray-200 shadow-lg">
-          <div>
-            <button
-              onClick={() => {
-                setCurrentPage('waitlist');
-                setWaitlistSubPage('view');
-                setMenuOpen(false);
-              }}
-              className={`w-full p-4 text-left hover:bg-gray-100 transition-colors ${
-                currentPage === 'waitlist' ? 'bg-blue-50 border-l-4 border-blue-600' : ''
-              }`}
-            >
-              <div className="font-semibold">Waitlist & Tables</div>
-              <div className="text-sm text-gray-600">Manage guests and seating</div>
-            </button>
-            {currentPage === 'waitlist' && (
-              <div className="pl-8 bg-gray-50 border-l-4 border-blue-600">
-                <button
-                  onClick={() => {
-                    setWaitlistSubPage('view');
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full p-3 text-left hover:bg-gray-100 transition-colors ${
-                    waitlistSubPage === 'view' ? 'bg-blue-100' : ''
-                  }`}
-                >
-                  <div className="text-sm font-medium">View</div>
-                </button>
-                <button
-                  onClick={() => {
-                    setWaitlistSubPage('settings');
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full p-3 text-left hover:bg-gray-100 transition-colors ${
-                    waitlistSubPage === 'settings' ? 'bg-blue-100' : ''
-                  }`}
-                >
-                  <div className="text-sm font-medium">Table Settings</div>
-                </button>
-              </div>
-            )}
-          </div>
           <button
             onClick={() => {
-              setCurrentPage('capacity');
+              setCurrentPage('home');
               setMenuOpen(false);
             }}
             className={`w-full p-4 text-left hover:bg-gray-100 transition-colors ${
-              currentPage === 'capacity' ? 'bg-blue-50 border-l-4 border-blue-600' : ''
+              currentPage === 'home' ? 'bg-blue-50 border-l-4 border-blue-600' : ''
             }`}
           >
-            <div className="font-semibold">Capacity Management</div>
-            <div className="text-sm text-gray-600">Monitor current capacity</div>
-          </button>
-          <button
-            onClick={() => setIsOnline(!isOnline)}
-            className="w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200"
-          >
-            <div className="font-semibold">Toggle {isOnline ? 'Offline' : 'Online'} Mode</div>
-            <div className="text-sm text-gray-600">Current: {isOnline ? 'Online' : 'Offline'}</div>
+            <div className="font-semibold">Dashboard</div>
+            <div className="text-sm text-gray-600">View all events</div>
           </button>
         </div>
       )}
 
-      {currentPage === 'capacity' ? (
-        <div className="flex-1 overflow-auto">
-          <div className="p-6 bg-white">
-            <h2 className="text-lg font-semibold mb-4 text-center">Current Capacity</h2>
-            <div className="flex items-center justify-center gap-4">
+      {currentPage === 'home' ? (
+        <div className="flex-1 overflow-auto bg-gray-50">
+          <div className="p-6 max-w-4xl mx-auto">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-800">Your Events</h2>
+                <p className="text-gray-600">Manage your active events</p>
+              </div>
               <button
-                onClick={handleDecreaseCapacity}
-                className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg active:scale-95 transition-transform"
-                disabled={currentCapacity === 0}
+                onClick={() => setShowCreateEventModal(true)}
+                className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-xl font-semibold shadow-lg active:scale-95 transition-transform"
               >
-                <Minus className="w-6 h-6" />
-              </button>
-              
-              <CircularProgress current={currentCapacity} max={maxCapacity} size={180} />
-              
-              <button
-                onClick={handleIncreaseCapacity}
-                className="w-14 h-14 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center shadow-lg active:scale-95 transition-transform"
-                disabled={currentCapacity === maxCapacity}
-              >
-                <Plus className="w-6 h-6" />
+                <Plus className="w-5 h-5" />
+                Create Event
               </button>
             </div>
+            
+            {events.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Clock className="w-10 h-10 text-gray-400" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-800 mb-2">No events yet</h3>
+                <p className="text-gray-600 mb-6">Create your first event to get started</p>
+                <button
+                  onClick={() => setShowCreateEventModal(true)}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-xl font-semibold shadow-lg active:scale-95 transition-transform"
+                >
+                  <Plus className="w-5 h-5" />
+                  Create Event
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {events.map((event) => {
+                  const statusColor = 
+                    event.status === 'active' ? 'bg-green-100 text-green-700' :
+                    event.status === 'paused' ? 'bg-amber-100 text-amber-700' :
+                    'bg-gray-100 text-gray-700';
+                  
+                  const typeColor = event.type === 'capacity-based' ? 'blue' : 'purple';
+                  const TypeIcon = event.type === 'capacity-based' ? Users : Users;
+                  
+                  const currentCount = event.type === 'capacity-based' 
+                    ? event.currentCount 
+                    : event.currentFilledTables;
+                  
+                  const maxCount = event.type === 'capacity-based'
+                    ? event.capacity
+                    : event.numberOfTables;
+
+                  return (
+                    <button
+                      key={event.id}
+                      onClick={() => {
+                        setSelectedEvent(event);
+                        if (event.type === 'capacity-based') {
+                          setCurrentPage('capacity');
+                        } else {
+                          setCurrentPage('waitlist');
+                          setWaitlistSubPage('view');
+                        }
+                      }}
+                      className={`bg-white rounded-xl shadow-md hover:shadow-xl transition-all p-6 text-left border-2 border-transparent hover:border-${typeColor}-500 group`}
+                    >
+                      <div className="flex items-start justify-between mb-4">
+                        <div className={`w-12 h-12 bg-${typeColor}-100 rounded-lg flex items-center justify-center group-hover:bg-${typeColor}-500 transition-colors`}>
+                          <TypeIcon className={`w-6 h-6 text-${typeColor}-600 group-hover:text-white`} />
+                        </div>
+                        <span className={`text-xs px-3 py-1 rounded-full font-medium ${statusColor}`}>
+                          {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
+                        </span>
+                      </div>
+                      
+                      <h3 className="text-xl font-bold text-gray-800 mb-2">{event.name}</h3>
+                      
+                      <div className="flex items-center gap-2 mb-4">
+                        <span className="text-sm text-gray-600">
+                          {event.type === 'capacity-based' ? 'Capacity-Based' : 'Table-Based'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <div className="text-2xl font-bold text-gray-800">
+                            {currentCount} <span className="text-sm font-normal text-gray-500">/ {maxCount}</span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {event.type === 'capacity-based' ? 'In Queue' : 'Tables Filled'}
+                          </div>
+                        </div>
+                        <div className="text-2xl font-bold text-gray-300 group-hover:text-blue-500 transition-colors">→</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
+        </div>
+      ) : currentPage === 'capacity' ? (
+        <div className="flex-1 overflow-auto">
+          <div className="p-4 space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-bold">Queue Lines</h2>
+              <button
+                onClick={() => {
+                  setEditingAttraction(null);
+                  setShowAttractionModal(true);
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 active:scale-95 transition-transform"
+              >
+                <Plus className="w-4 h-4" />
+                Add Line
+              </button>
+            </div>
+
+            <div className="grid gap-4">
+              {attractions.map((attraction) => {
+                // Get actual queue size from waitlist for this event
+                const actualQueueSize = selectedEvent ? waitlist.filter(e => e.eventId === selectedEvent.id).length : attraction.queueSize;
+                const queuePercentage = (actualQueueSize / attraction.queueCapacity) * 100;
+                const getQueueColor = () => {
+                  if (queuePercentage < 50) return 'bg-green-500';
+                  if (queuePercentage < 80) return 'bg-amber-500';
+                  return 'bg-red-500';
+                };
+
+                // Auto-update wait time based on actual queue size
+                const displayWaitTime = attraction.autoCalculateWait 
+                  ? calculateWaitTime(actualQueueSize, attraction.throughput)
+                  : attraction.waitTime;
+
+                return (
+                  <div key={attraction.id} className="bg-white rounded-lg shadow-md p-4 border-2 border-gray-200">
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex-1">
+                        <h3 className="text-lg font-bold">{attraction.name}</h3>
+                        <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
+                          <span className={`inline-block w-2 h-2 rounded-full ${
+                            attraction.status === 'open' ? 'bg-green-500' :
+                            attraction.status === 'delayed' ? 'bg-amber-500' : 'bg-red-500'
+                          }`} />
+                          {attraction.status.charAt(0).toUpperCase() + attraction.status.slice(1)}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setEditingAttraction(attraction);
+                            setShowAttractionModal(true);
+                          }}
+                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                          <Edit2 className="w-4 h-4 text-gray-600" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete ${attraction.name}?`)) {
+                              setAttractions(attractions.filter(a => a.id !== attraction.id));
+                              toast.success(`${attraction.name} deleted`);
+                              simulateSync();
+                            }
+                          }}
+                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-600" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-3">
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <div className="flex items-center gap-1 text-xs text-gray-600 mb-2">
+                          <Clock className="w-3 h-3" />
+                          Wait Time {attraction.autoCalculateWait && <span className="text-green-600">(Auto)</span>}
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <button
+                            onClick={() => {
+                              setAttractions(attractions.map(a =>
+                                a.id === attraction.id
+                                  ? { ...a, waitTime: Math.max(0, a.waitTime - 5), autoCalculateWait: false }
+                                  : a
+                              ));
+                              simulateSync();
+                            }}
+                            className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center active:scale-95 transition-transform"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <span className="text-2xl font-bold">{displayWaitTime}m</span>
+                          <button
+                            onClick={() => {
+                              setAttractions(attractions.map(a =>
+                                a.id === attraction.id
+                                  ? { ...a, waitTime: a.waitTime + 5, autoCalculateWait: false }
+                                  : a
+                              ));
+                              simulateSync();
+                            }}
+                            className="w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center active:scale-95 transition-transform"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <div className="flex items-center gap-1 text-xs text-gray-600 mb-2">
+                          <Users className="w-3 h-3" />
+                          Queue Size (Live)
+                        </div>
+                        <div className="text-center">
+                          <span className="text-xl font-bold">{actualQueueSize}/{attraction.queueCapacity}</span>
+                          <p className="text-xs text-gray-500 mt-1">Updates as guests join</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs text-gray-600">
+                        <span>Queue Capacity</span>
+                        <span>{Math.round(queuePercentage)}%</span>
+                      </div>
+                      <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${getQueueColor()} transition-all duration-500`}
+                          style={{ width: `${Math.min(queuePercentage, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-gray-500 mt-2 flex justify-between items-center">
+                      <span>Throughput: {attraction.throughput} ppl/hr</span>
+                      {attraction.autoCalculateWait ? (
+                        <button
+                          onClick={() => {
+                            setAttractions(attractions.map(a =>
+                              a.id === attraction.id ? { ...a, autoCalculateWait: false } : a
+                            ));
+                            toast.info('Manual wait time mode enabled');
+                          }}
+                          className="text-blue-600 hover:text-blue-700 underline"
+                        >
+                          Switch to Manual
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setAttractions(attractions.map(a => {
+                              if (a.id === attraction.id) {
+                                return {
+                                  ...a,
+                                  autoCalculateWait: true,
+                                  waitTime: calculateWaitTime(a.queueSize, a.throughput)
+                                };
+                              }
+                              return a;
+                            }));
+                            toast.info('Auto-calculate wait time enabled');
+                          }}
+                          className="text-green-600 hover:text-green-700 underline"
+                        >
+                          Switch to Auto
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {attractions.length === 0 && (
+              <div className="text-center py-12 text-gray-500">
+                <p>No queue lines added yet.</p>
+                <p className="text-sm">Click "Add Line" to get started.</p>
+              </div>
+            )}
+          </div>
+
+          {showAttractionModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+                <h3 className="text-xl font-bold mb-4">
+                  {editingAttraction ? 'Edit Line' : 'Add New Line'}
+                </h3>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.currentTarget);
+                    const queueSize = parseInt(formData.get('queueSize') as string);
+                    const throughput = parseInt(formData.get('throughput') as string);
+                    const autoCalculateWait = formData.get('autoCalculateWait') === 'on';
+                    
+                    const newAttraction: Attraction = {
+                      id: editingAttraction?.id || Date.now().toString(),
+                      name: formData.get('name') as string,
+                      waitTime: autoCalculateWait 
+                        ? calculateWaitTime(queueSize, throughput)
+                        : parseInt(formData.get('waitTime') as string),
+                      queueSize,
+                      queueCapacity: parseInt(formData.get('queueCapacity') as string),
+                      throughput,
+                      status: formData.get('status') as 'open' | 'closed' | 'delayed',
+                      autoCalculateWait,
+                    };
+
+                    if (editingAttraction) {
+                      setAttractions(attractions.map(a =>
+                        a.id === editingAttraction.id ? newAttraction : a
+                      ));
+                      toast.success('Line updated');
+                    } else {
+                      setAttractions([...attractions, newAttraction]);
+                      toast.success('Line added');
+                    }
+                    simulateSync();
+                    setShowAttractionModal(false);
+                    setEditingAttraction(null);
+                  }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Line Name</label>
+                    <input
+                      type="text"
+                      name="name"
+                      defaultValue={editingAttraction?.name || ''}
+                      required
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      placeholder="e.g., Main Entrance Queue"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Wait Time (minutes)</label>
+                    <input
+                      type="number"
+                      name="waitTime"
+                      defaultValue={editingAttraction?.waitTime || 30}
+                      required
+                      min="0"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Current Queue Size</label>
+                    <input
+                      type="number"
+                      name="queueSize"
+                      defaultValue={editingAttraction?.queueSize || 0}
+                      required
+                      min="0"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Queue Capacity</label>
+                    <input
+                      type="number"
+                      name="queueCapacity"
+                      defaultValue={editingAttraction?.queueCapacity || 200}
+                      required
+                      min="1"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Throughput (people/hour)</label>
+                    <input
+                      type="number"
+                      name="throughput"
+                      defaultValue={editingAttraction?.throughput || 240}
+                      required
+                      min="1"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">How many people can be processed per hour</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Status</label>
+                    <select
+                      name="status"
+                      defaultValue={editingAttraction?.status || 'open'}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    >
+                      <option value="open">Open</option>
+                      <option value="delayed">Delayed</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        name="autoCalculateWait"
+                        defaultChecked={editingAttraction?.autoCalculateWait ?? true}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm font-medium">Auto-calculate wait time from queue size</span>
+                    </label>
+                    <p className="text-xs text-gray-500 mt-1">When enabled, wait time updates automatically based on queue size and throughput</p>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAttractionModal(false);
+                        setEditingAttraction(null);
+                      }}
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+                    >
+                      {editingAttraction ? 'Save Changes' : 'Add Line'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       ) : waitlistSubPage === 'settings' ? (
         <div className="flex-1 overflow-auto">
@@ -749,6 +968,18 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
             )}
           </div>
         </div>
+      )}
+
+      {/* Create Event Modal */}
+      {showCreateEventModal && (
+        <CreateEventModal
+          businessId={getStoredUser()?.businessId || 'default'}
+          onClose={() => setShowCreateEventModal(false)}
+          onCreateEvent={(event) => {
+            addEvent(event);
+            setEvents(getStoredEvents());
+          }}
+        />
       )}
     </div>
   );

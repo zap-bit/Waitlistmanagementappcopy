@@ -5,7 +5,8 @@ import { ApiError } from '../middleware/error.js';
 export const staffRouter = Router({ mergeParams: true });
 
 staffRouter.get('/dashboard', (req, res, next) => {
-  const event = db.events.get(req.params.eventId);
+  const { eventId } = req.params as { eventId: string };
+  const event = db.events.get(eventId);
   if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
 
   const occupiedTables = event.tables.filter((t) => t.occupied).length;
@@ -23,7 +24,8 @@ staffRouter.get('/dashboard', (req, res, next) => {
 });
 
 staffRouter.post('/promote', (req, res, next) => {
-  const event = db.events.get(req.params.eventId);
+  const { eventId } = req.params as { eventId: string };
+  const event = db.events.get(eventId);
   if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
 
   const requestedType = req.body?.type;
@@ -36,7 +38,8 @@ staffRouter.post('/promote', (req, res, next) => {
 });
 
 staffRouter.post('/seat', (req, res, next) => {
-  const event = db.events.get(req.params.eventId);
+  const { eventId } = req.params as { eventId: string };
+  const event = db.events.get(eventId);
   if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
 
   const { entryId, tableId } = req.body ?? {};
@@ -54,7 +57,7 @@ staffRouter.post('/seat', (req, res, next) => {
   table.seatedAt = new Date().toISOString();
 
   event.waitlist = event.waitlist.filter((e) => e.id !== entryId);
-  recalcQueuePositions(req.params.eventId);
+  recalcQueuePositions(eventId);
 
   return res.json({ entryId, tableId, status: 'SEATED' });
 });

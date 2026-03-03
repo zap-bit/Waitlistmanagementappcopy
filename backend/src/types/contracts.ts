@@ -1,6 +1,8 @@
-export type EventType = 'OUTDOOR' | 'INDOOR_TABLES' | 'INDOOR_SEATED';
 export type EntryType = 'reservation' | 'waitlist';
 export type EntryStatus = 'QUEUED' | 'NOTIFIED' | 'SEATED' | 'NO_SHOW' | 'CANCELLED' | 'EXPIRED';
+
+export type EventType = 'capacity-based' | 'table-based';
+export type EventStatus = 'active' | 'paused' | 'closed';
 
 export interface WaitlistEntry {
   id: string;
@@ -27,16 +29,46 @@ export interface Table {
   seatedAt?: string;
 }
 
-export interface EventModel {
+export interface BaseEvent {
   id: string;
+  businessId: string;
   name: string;
-  eventType: EventType;
-  maxCapacity: number;
-  totalTables?: number;
-  totalSeats?: number;
-  startTime: string;
-  endTime: string;
-  offlineEnabled?: boolean;
+  type: EventType;
+  status: EventStatus;
+  createdAt: string;
   waitlist: WaitlistEntry[];
   tables: Table[];
+}
+
+export interface CapacityEvent extends BaseEvent {
+  type: 'capacity-based';
+  capacity: number;
+  estimatedWaitPerPerson: number;
+  location: string;
+  currentCount: number;
+}
+
+export interface TableEvent extends BaseEvent {
+  type: 'table-based';
+  numberOfTables: number;
+  averageTableSize: number;
+  reservationDuration: number;
+  noShowPolicy: string;
+  currentFilledTables: number;
+}
+
+export type EventModel = CapacityEvent | TableEvent;
+
+export interface UserModel {
+  id: string;
+  email: string;
+  name: string;
+  role: 'user' | 'staff';
+  businessId?: string;
+}
+
+export interface BusinessModel {
+  id: string;
+  name: string;
+  ownerId: string;
 }
