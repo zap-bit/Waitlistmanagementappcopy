@@ -121,7 +121,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
   const sameTypeAndEventEntries = myEntry 
     ? allWaitlistEntries.filter(e => e.type === myEntry.type && e.eventId === myEntry.eventId) 
     : [];
-  const position = myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === selectedWaitlistId) + 1 : 0;
+  const position = myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === myEntry.id) + 1 : 0;
   
   // Calculate dynamic wait time based on current position
   const estimatedWaitMinutes = myEntry ? calculateDynamicWaitTime(myEntry, allWaitlistEntries) : 0;
@@ -131,7 +131,11 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
 
   // Keep stored IDs synced with active entries and reset stale selection
   useEffect(() => {
-    if (activeMyWaitlistIds.length !== myWaitlistIds.length) {
+    const idsChanged =
+      activeMyWaitlistIds.length !== myWaitlistIds.length ||
+      activeMyWaitlistIds.some((id, index) => id !== myWaitlistIds[index]);
+
+    if (idsChanged) {
       setMyWaitlistIds(activeMyWaitlistIds);
       if (selectedWaitlistId && !activeMyWaitlistIds.includes(selectedWaitlistId)) {
         setSelectedWaitlistId(activeMyWaitlistIds[0] ?? null);
