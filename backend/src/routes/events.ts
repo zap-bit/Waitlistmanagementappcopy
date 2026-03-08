@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { db } from '../data/store.js';
 import { ApiError } from '../middleware/error.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 import type { EventModel } from '../types/contracts.js';
 
 export const eventsRouter = Router();
@@ -58,11 +59,19 @@ eventsRouter.get('/:eventId', (req, res, next) => {
   return res.json(event);
 });
 
-eventsRouter.post('/', (req, res, next) => {
+eventsRouter.post('/', (req: AuthenticatedRequest, res, next) => {
+  if (req.user?.role !== 'staff') {
+    return next(new ApiError(403, 'FORBIDDEN', 'Staff role required'));
+  }
+
   const payload = req.body as Partial<EventPayload>;
 
   if (!payload?.businessId || !payload?.name || !payload?.type) {
     return next(new ApiError(400, 'INVALID_INPUT', 'businessId, name and type are required'));
+  }
+
+  if (payload.businessId !== req.user.businessId) {
+    return next(new ApiError(403, 'FORBIDDEN', 'Cannot create events for another business'));
   }
 
   if (payload.type !== 'capacity-based' && payload.type !== 'table-based') {
@@ -74,9 +83,17 @@ eventsRouter.post('/', (req, res, next) => {
   res.status(201).json(event);
 });
 
-eventsRouter.patch('/:eventId', (req, res, next) => {
+eventsRouter.patch('/:eventId', (req: AuthenticatedRequest, res, next) => {
+  if (req.user?.role !== 'staff') {
+    return next(new ApiError(403, 'FORBIDDEN', 'Staff role required'));
+  }
+
   const existing = db.events.get(req.params.eventId);
   if (!existing) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId: req.params.eventId }));
+
+  if (existing.businessId !== req.user.businessId) {
+    return next(new ApiError(403, 'FORBIDDEN', 'Cannot modify another business event'));
+  }
 
   const merged = {
     ...existing,
@@ -92,9 +109,17 @@ eventsRouter.patch('/:eventId', (req, res, next) => {
   res.json(event);
 });
 
-eventsRouter.delete('/:eventId', (req, res, next) => {
-  const exists = db.events.has(req.params.eventId);
-  if (!exists) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId: req.params.eventId }));
+eventsRouter.delete('/:eventId', (req: AuthenticatedRequest, res, next) => {
+  if (req.user?.role !== 'staff') {
+    return next(new ApiError(403, 'FORBIDDEN', 'Staff role required'));
+  }
+
+  const event = db.events.get(req.params.eventId);
+  if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId: req.params.eventId }));
+
+  if (event.businessId !== req.user.businessId) {
+    return next(new ApiError(403, 'FORBIDDEN', 'Cannot delete another business event'));
+  }
 
   db.events.delete(req.params.eventId);
   res.json({ ok: true });
