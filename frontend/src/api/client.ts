@@ -115,6 +115,7 @@ export const apiClient = {
 
   async addToWaitlist(payload: {
     name: string;
+    queueId?: string;
     partySize: number;
     type: EntryType;
     specialRequests?: string;

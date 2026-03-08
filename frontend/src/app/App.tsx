@@ -15,6 +15,7 @@ import {
   logout as authLogout,
   User 
 } from './utils/auth';
+import { getStoredEvents, CapacityBasedEvent, TableBasedEvent } from './utils/events';
 
 type Role = 'staff' | 'attendee' | null;
 type AuthScreen = 'welcome' | 'login' | 'signup' | null;
@@ -28,6 +29,7 @@ export interface WaitlistEntry {
   specialRequests?: string;
   type: 'reservation' | 'waitlist';
   eventId?: string;
+  queueId?: string; // For multiple-queue capacity events
 }
 
 const getInitialWaitlist = (): WaitlistEntry[] => {
@@ -203,16 +205,48 @@ export default function App() {
     }
   };
 
-  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string) => {
+  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string) => {
+    // Calculate estimated wait based on event settings
+    let estimatedWait = 15; // Default fallback
+    
+    if (eventId) {
+      const event = getStoredEvents().find(e => e.id === eventId);
+      if (event && event.type === 'capacity-based') {
+        const capacityEvent = event as CapacityBasedEvent;
+        
+        // Count people ahead in the same queue/event
+        let peopleAhead = 0;
+        if (capacityEvent.queueMode === 'multiple' && queueId) {
+          // For multiple queues, count only people in the same queue
+          peopleAhead = waitlist.filter(e => e.eventId === eventId && e.queueId === queueId).length;
+        } else {
+          // For single queue, count all people in the event
+          peopleAhead = waitlist.filter(e => e.eventId === eventId).length;
+        }
+        
+        // Calculate wait time: people ahead × wait time per person
+        estimatedWait = peopleAhead * capacityEvent.estimatedWaitPerPerson;
+      } else if (event && event.type === 'table-based') {
+        const tableEvent = event as TableBasedEvent;
+        // For table-based events, use reservation duration
+        const peopleAhead = waitlist.filter(e => e.eventId === eventId && e.type === type).length;
+        estimatedWait = peopleAhead * (tableEvent.reservationDuration / tableEvent.averageTableSize);
+      }
+    } else {
+      // Legacy fallback for entries without eventId
+      estimatedWait = 15 + waitlist.length * 5;
+    }
+    
     const newEntry: WaitlistEntry = {
       id: Date.now().toString(),
       name,
       partySize,
       joinedAt: new Date(),
-      estimatedWait: 15 + waitlist.length * 5,
+      estimatedWait: Math.round(estimatedWait),
       specialRequests,
       type,
       eventId,
+      queueId,
     };
     setWaitlist((prev) => [...prev, newEntry]);
     return newEntry.id;
@@ -274,6 +308,7 @@ export default function App() {
           setWaitlist={setWaitlist}
           tables={tables}
           setTables={setTables}
+          user={user!}
         />
         <Toaster position="top-center" />
       </>
@@ -290,6 +325,7 @@ export default function App() {
           removeFromWaitlist={removeFromWaitlist}
           allWaitlistEntries={waitlist}
           tables={tables}
+          user={user!}
         />
         <Toaster position="top-center" />
       </>

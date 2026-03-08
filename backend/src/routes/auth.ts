@@ -2,16 +2,16 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { db } from '../data/store.js';
 import { ApiError } from '../middleware/error.js';
+import { createAuthToken, verifyPassword, hashPassword, verifyAuthToken } from '../utils/security.js';
 import type { BusinessModel, UserModel } from '../types/contracts.js';
 
 export const authRouter = Router();
 
 const toAuthResponse = (user: UserModel) => {
-  const token = `demo-token-${nanoid()}`;
-  db.tokens.set(token, user.id);
+  const { token, expiresIn } = createAuthToken(user.id);
   return {
     token,
-    expiresIn: 86400,
+    expiresIn,
     user,
   };
 };
@@ -29,7 +29,7 @@ authRouter.post('/login', (req, res, next) => {
   }
 
   const savedPassword = db.passwords.get(userId);
-  if (savedPassword !== password) {
+  if (!savedPassword || !verifyPassword(String(password), savedPassword)) {
     return next(new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password'));
   }
 
@@ -62,7 +62,7 @@ authRouter.post('/signup/user', (req, res, next) => {
 
   db.users.set(user.id, user);
   db.usersByEmail.set(normalizedEmail, user.id);
-  db.passwords.set(user.id, password);
+  db.passwords.set(user.id, hashPassword(String(password)));
 
   return res.status(201).json(toAuthResponse(user));
 });
@@ -98,7 +98,7 @@ authRouter.post('/signup/business', (req, res, next) => {
   db.businesses.set(business.id, business);
   db.users.set(user.id, user);
   db.usersByEmail.set(normalizedEmail, user.id);
-  db.passwords.set(user.id, password);
+  db.passwords.set(user.id, hashPassword(String(password)));
 
   return res.status(201).json(toAuthResponse(user));
 });
@@ -110,12 +110,12 @@ authRouter.get('/me', (req, res, next) => {
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const userId = db.tokens.get(token);
-  if (!userId) {
-    return next(new ApiError(401, 'UNAUTHORIZED', 'Invalid token'));
+  const payload = verifyAuthToken(token);
+  if (!payload) {
+    return next(new ApiError(401, 'UNAUTHORIZED', 'Invalid or expired token'));
   }
 
-  const user = db.users.get(userId);
+  const user = db.users.get(payload.uid);
   if (!user) {
     return next(new ApiError(401, 'UNAUTHORIZED', 'Invalid token user'));
   }

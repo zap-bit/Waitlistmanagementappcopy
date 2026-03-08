@@ -28,6 +28,8 @@ function toEvent(payload: EventPayload, existing?: EventModel): EventModel {
       estimatedWaitPerPerson: payload.estimatedWaitPerPerson ?? 5,
       location: payload.location ?? 'Main Entrance',
       currentCount: payload.currentCount ?? 0,
+      queueMode: payload.queueMode ?? 'single',
+      queues: payload.queues,
     };
   }
 
