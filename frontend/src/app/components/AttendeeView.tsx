@@ -94,13 +94,13 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
   // Persist attendee state to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      if (myWaitlistIds.length > 0) {
-        localStorage.setItem('myWaitlistIds', JSON.stringify(myWaitlistIds));
+      if (activeMyWaitlistIds.length > 0) {
+        localStorage.setItem('myWaitlistIds', JSON.stringify(activeMyWaitlistIds));
       } else {
         localStorage.removeItem('myWaitlistIds');
       }
     }
-  }, [myWaitlistIds]);
+  }, [activeMyWaitlistIds]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -108,8 +108,13 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     }
   }, [isOnline]);
 
+  const activeMyEntries = Array.from(new Set(myWaitlistIds))
+    .map((id) => allWaitlistEntries.find((entry) => entry.id === id))
+    .filter((entry): entry is WaitlistEntry => Boolean(entry));
+  const activeMyWaitlistIds = activeMyEntries.map((entry) => entry.id);
+
   // Find my entry in the waitlist or full list
-  const myEntry = allWaitlistEntries.find((e) => e.id === selectedWaitlistId);
+  const myEntry = activeMyEntries.find((e) => e.id === selectedWaitlistId) ?? activeMyEntries[0] ?? null;
   const isOnWaitlist = !!myEntry;
   
   // Calculate position only for entries of the same type and event
@@ -124,14 +129,19 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
   // Check if all tables are occupied
   const allTablesOccupied = tables.every((table) => table.occupied);
 
-  // Clear stored ID if entry no longer exists in waitlist
+  // Keep stored IDs synced with active entries and reset stale selection
   useEffect(() => {
-    if (selectedWaitlistId && !myEntry) {
-      setMyWaitlistIds(myWaitlistIds.filter(id => id !== selectedWaitlistId));
-      setViewingStatus(false);
-      toast.info('You have been seated or removed from the waitlist');
+    if (activeMyWaitlistIds.length !== myWaitlistIds.length) {
+      setMyWaitlistIds(activeMyWaitlistIds);
+      if (selectedWaitlistId && !activeMyWaitlistIds.includes(selectedWaitlistId)) {
+        setSelectedWaitlistId(activeMyWaitlistIds[0] ?? null);
+        if (viewingStatus && activeMyWaitlistIds.length === 0) {
+          setViewingStatus(false);
+          toast.info('You have been seated or removed from the waitlist');
+        }
+      }
     }
-  }, [selectedWaitlistId, myEntry]);
+  }, [activeMyWaitlistIds, myWaitlistIds, selectedWaitlistId, viewingStatus]);
 
   // Get event name for display
   const myEventName = myEntry?.eventId 
@@ -278,7 +288,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       selectedQueue?.id
     );
     
-    setMyWaitlistIds([...myWaitlistIds, newId]);
+    setMyWaitlistIds((prev) => Array.from(new Set([...prev, newId])));
     setSelectedWaitlistId(newId);
     setViewingStatus(true);
     
@@ -316,7 +326,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       myEntry.queueId
     );
     
-    setMyWaitlistIds([...myWaitlistIds, newId]);
+    setMyWaitlistIds((prev) => Array.from(new Set([...prev, newId])));
     toast.success(`Added ${guestName} to the waitlist!`);
     
     setShowAddAnotherForm(false);
@@ -329,7 +339,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     if (!selectedWaitlistId) return;
     
     removeFromWaitlist(selectedWaitlistId);
-    setMyWaitlistIds(myWaitlistIds.filter(id => id !== selectedWaitlistId));
+    setMyWaitlistIds((prev) => prev.filter(id => id !== selectedWaitlistId));
     setViewingStatus(false);
     setSelectedWaitlistId(null);
     
@@ -378,9 +388,9 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
           >
             <div className="flex items-center justify-between">
               <div className="font-semibold">My Events</div>
-              {myWaitlistIds.length > 0 && (
+              {activeMyWaitlistIds.length > 0 && (
                 <span className="bg-blue-600 text-white text-xs font-bold px-2 py-1 rounded-full">
-                  {myWaitlistIds.length}
+                  {activeMyWaitlistIds.length}
                 </span>
               )}
             </div>
@@ -534,13 +544,13 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                   <span className="text-sm opacity-90">Enter code or scan QR</span>
                 </button>
 
-                {myWaitlistIds.length > 0 && (
+                {activeMyWaitlistIds.length > 0 && (
                   <button
                     onClick={() => setShowMyEvents(true)}
                     className="w-full bg-green-600 hover:bg-green-700 text-white py-4 px-6 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-transform"
                   >
                     <Ticket className="w-6 h-6" />
-                    View My Events ({myWaitlistIds.length})
+                    View My Events ({activeMyWaitlistIds.length})
                   </button>
                 )}
 
@@ -793,7 +803,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
               </button>
 
               {/* Event Switcher Dropdown - only show if user has multiple events */}
-              {myWaitlistIds.length > 1 && (
+              {activeMyWaitlistIds.length > 1 && (
                 <div className="mb-6">
                   <label className="block text-xs text-gray-500 mb-2">Switch Event</label>
                   <select
@@ -807,7 +817,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                     }}
                     className="w-full p-3 border-2 border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
                   >
-                    {myWaitlistIds.map((id) => {
+                    {activeMyWaitlistIds.map((id) => {
                       const entry = allWaitlistEntries.find(e => e.id === id);
                       if (!entry) return null;
                       
@@ -962,7 +972,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
             </div>
 
             <div className="p-6 space-y-4">
-              {myWaitlistIds.length === 0 ? (
+              {activeMyWaitlistIds.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Ticket className="w-10 h-10 text-gray-400" />
@@ -984,9 +994,9 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
               ) : (
                 <>
                   <p className="text-sm text-gray-600 mb-4">
-                    You're currently on {myWaitlistIds.length} {myWaitlistIds.length === 1 ? 'waitlist' : 'waitlists'}
+                    You're currently on {activeMyWaitlistIds.length} {activeMyWaitlistIds.length === 1 ? 'waitlist' : 'waitlists'}
                   </p>
-                  {myWaitlistIds.map((id) => {
+                  {activeMyWaitlistIds.map((id) => {
                     const entry = allWaitlistEntries.find(e => e.id === id);
                     if (!entry) return null; // Entry was removed
 
