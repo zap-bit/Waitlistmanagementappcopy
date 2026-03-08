@@ -27,7 +27,8 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       const saved = localStorage.getItem('myWaitlistIds');
       if (saved) {
         try {
-          return JSON.parse(saved);
+          const parsed = JSON.parse(saved);
+          return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
         } catch (e) {
           return [];
         }
@@ -91,6 +92,11 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     setAvailableEvents(events);
   }, []);
 
+  const activeMyEntries = Array.from(new Set(myWaitlistIds))
+    .map((id) => allWaitlistEntries.find((entry) => entry.id === id))
+    .filter((entry): entry is WaitlistEntry => Boolean(entry));
+  const activeMyWaitlistIds = activeMyEntries.map((entry) => entry.id);
+
   // Persist attendee state to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -107,11 +113,6 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       localStorage.setItem('attendeeIsOnline', JSON.stringify(isOnline));
     }
   }, [isOnline]);
-
-  const activeMyEntries = Array.from(new Set(myWaitlistIds))
-    .map((id) => allWaitlistEntries.find((entry) => entry.id === id))
-    .filter((entry): entry is WaitlistEntry => Boolean(entry));
-  const activeMyWaitlistIds = activeMyEntries.map((entry) => entry.id);
 
   // Find my entry in the waitlist or full list
   const myEntry = activeMyEntries.find((e) => e.id === selectedWaitlistId) ?? activeMyEntries[0] ?? null;
