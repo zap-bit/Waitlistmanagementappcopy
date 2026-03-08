@@ -76,7 +76,9 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
   const [showProfile, setShowProfile] = useState(false);
   const [totalTables, setTotalTables] = useState(() => getStoredNumber('totalTables', 12));
   const [showCreateEventModal, setShowCreateEventModal] = useState(false);
-  const [events, setEvents] = useState<Event[]>(getStoredEvents);
+  const [events, setEvents] = useState<Event[]>(() =>
+    getStoredEvents().filter((event) => !user.businessId || event.businessId === user.businessId),
+  );
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [attractions, setAttractions] = useState<Attraction[]>([]);
   const [showAttractionModal, setShowAttractionModal] = useState(false);
@@ -87,43 +89,47 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
   const [selectedQueueId, setSelectedQueueId] = useState<string | undefined>();
   const [selectedQueueName, setSelectedQueueName] = useState<string | undefined>();
 
-  // Auto-create default line for single-queue events
+  // Keep events scoped to the active staff business
   useEffect(() => {
-    if (selectedEvent && selectedEvent.type === 'capacity-based') {
-      const capacityEvent = selectedEvent as CapacityBasedEvent;
-      if (capacityEvent.queueMode === 'single' && attractions.length === 0) {
-        // Create a default line with the same name as the event
-        const defaultLine: Attraction = {
-          id: 'default-single-queue',
-          name: selectedEvent.name,
-          waitTime: capacityEvent.estimatedWaitPerPerson || 30,
-          queueSize: capacityEvent.currentCount || 0,
-          queueCapacity: capacityEvent.capacity || 100,
-          throughput: 240, // default throughput
-          status: 'open',
-          autoCalculateWait: true,
-        };
-        setAttractions([defaultLine]);
-      } else if (capacityEvent.queueMode === 'multiple') {
-        // Load queues from the event if they exist
-        if (capacityEvent.queues && capacityEvent.queues.length > 0) {
-          const attractionsFromQueues: Attraction[] = capacityEvent.queues.map(queue => ({
-            id: queue.id,
-            name: queue.name,
-            waitTime: capacityEvent.estimatedWaitPerPerson || 30,
-            queueSize: queue.currentCount || 0,
-            queueCapacity: queue.capacity,
-            throughput: 240, // default throughput
-            status: 'open',
-            autoCalculateWait: true,
-          }));
-          setAttractions(attractionsFromQueues);
-        } else if (attractions.length === 0) {
-          // No queues defined yet, start with empty
-          setAttractions([]);
-        }
-      }
+    setEvents(getStoredEvents().filter((event) => !user.businessId || event.businessId === user.businessId));
+  }, [user.businessId]);
+
+  // Keep capacity lines synchronized with the currently selected event
+  useEffect(() => {
+    if (!selectedEvent || selectedEvent.type !== 'capacity-based') {
+      setAttractions([]);
+      return;
     }
+
+    const capacityEvent = selectedEvent as CapacityBasedEvent;
+
+    if (capacityEvent.queueMode === 'single') {
+      const defaultLine: Attraction = {
+        id: 'default-single-queue',
+        name: selectedEvent.name,
+        waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+        queueSize: capacityEvent.currentCount || 0,
+        queueCapacity: capacityEvent.capacity || 100,
+        throughput: 240,
+        status: 'open',
+        autoCalculateWait: true,
+      };
+      setAttractions([defaultLine]);
+      return;
+    }
+
+    const attractionsFromQueues: Attraction[] = (capacityEvent.queues || []).map((queue) => ({
+      id: queue.id,
+      name: queue.name,
+      waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+      queueSize: queue.currentCount || 0,
+      queueCapacity: queue.capacity,
+      throughput: 240,
+      status: 'open',
+      autoCalculateWait: true,
+    }));
+
+    setAttractions(attractionsFromQueues);
   }, [selectedEvent]);
 
   useEffect(() => {
@@ -1110,7 +1116,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
           onClose={() => setShowCreateEventModal(false)}
           onCreateEvent={(event) => {
             addEvent(event);
-            setEvents(getStoredEvents());
+            setEvents(getStoredEvents().filter((storedEvent) => !user.businessId || storedEvent.businessId === user.businessId));
           }}
         />
       )}
