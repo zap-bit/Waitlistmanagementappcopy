@@ -4,6 +4,7 @@ export interface ApiWaitlistEntry {
   id: string;
   eventId: string;
   name: string;
+  queueId?: string;
   partySize: number;
   type: EntryType;
   status: 'QUEUED' | 'NOTIFIED' | 'SEATED' | 'NO_SHOW' | 'CANCELLED' | 'EXPIRED';
@@ -32,6 +33,14 @@ export interface DashboardResponse {
 
 export type EventType = 'capacity-based' | 'table-based';
 export type EventStatus = 'active' | 'paused' | 'closed';
+export type QueueMode = 'single' | 'multiple';
+
+export interface ApiQueue {
+  id: string;
+  name: string;
+  capacity: number;
+  currentCount: number;
+}
 
 export interface ApiBaseEvent {
   id: string;
@@ -44,10 +53,12 @@ export interface ApiBaseEvent {
 
 export interface ApiCapacityEvent extends ApiBaseEvent {
   type: 'capacity-based';
+  queueMode: QueueMode;
   capacity: number;
   estimatedWaitPerPerson: number;
   location: string;
   currentCount: number;
+  queues?: ApiQueue[];
 }
 
 export interface ApiTableEvent extends ApiBaseEvent {

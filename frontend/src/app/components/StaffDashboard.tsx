@@ -3,11 +3,13 @@ import { CircularProgress } from './CircularProgress';
 import { StatusBar } from './StatusBar';
 import { TableGrid, Table } from './TableGrid';
 import { CreateEventModal } from './CreateEventModal';
-import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2 } from 'lucide-react';
+import { QRCodeModal } from './QRCodeModal';
+import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2, User as UserIcon, QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
-import { Event, getStoredEvents, addEvent, deleteEvent } from '../utils/events';
-import { getStoredUser } from '../utils/auth';
+import { Event, getStoredEvents, addEvent, deleteEvent, CapacityBasedEvent } from '../utils/events';
+import { getStoredUser, User } from '../utils/auth';
+import { Profile } from './Profile';
 
 interface Attraction {
   id: string;
@@ -26,6 +28,7 @@ interface StaffDashboardProps {
   setWaitlist: React.Dispatch<React.SetStateAction<WaitlistEntry[]>>;
   tables: Table[];
   setTables: React.Dispatch<React.SetStateAction<Table[]>>;
+  user: User;
 }
 
 const getStoredNumber = (key: string, defaultValue: number): number => {
@@ -61,7 +64,7 @@ const calculateWaitTime = (queueSize: number, throughput: number): number => {
   return Math.round((queueSize / throughput) * 60);
 };
 
-export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables }: StaffDashboardProps) {
+export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables, user }: StaffDashboardProps) {
   const [currentCapacity, setCurrentCapacity] = useState(() => getStoredNumber('currentCapacity', 45));
   const [maxCapacity, setMaxCapacity] = useState(() => getStoredNumber('maxCapacity', 100));
   const [isOnline, setIsOnline] = useState(() => getStoredBoolean('isOnline', true));
@@ -70,13 +73,64 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
   const [listView, setListView] = useState<'waitlist' | 'reservation'>('waitlist');
   const [waitlistSubPage, setWaitlistSubPage] = useState<'view' | 'settings'>('view');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [totalTables, setTotalTables] = useState(() => getStoredNumber('totalTables', 12));
   const [showCreateEventModal, setShowCreateEventModal] = useState(false);
-  const [events, setEvents] = useState<Event[]>(getStoredEvents);
+  const [events, setEvents] = useState<Event[]>(() =>
+    getStoredEvents().filter((event) => !user.businessId || event.businessId === user.businessId),
+  );
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [attractions, setAttractions] = useState<Attraction[]>([]);
   const [showAttractionModal, setShowAttractionModal] = useState(false);
   const [editingAttraction, setEditingAttraction] = useState<Attraction | null>(null);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+  const [showQRCodeModal, setShowQRCodeModal] = useState(false);
+  const [selectedQueueId, setSelectedQueueId] = useState<string | undefined>();
+  const [selectedQueueName, setSelectedQueueName] = useState<string | undefined>();
+
+  // Keep events scoped to the active staff business
+  useEffect(() => {
+    setEvents(getStoredEvents().filter((event) => !user.businessId || event.businessId === user.businessId));
+  }, [user.businessId]);
+
+  // Keep capacity lines synchronized with the currently selected event
+  useEffect(() => {
+    if (!selectedEvent || selectedEvent.type !== 'capacity-based') {
+      setAttractions([]);
+      return;
+    }
+
+    const capacityEvent = selectedEvent as CapacityBasedEvent;
+
+    if (capacityEvent.queueMode === 'single') {
+      const defaultLine: Attraction = {
+        id: 'default-single-queue',
+        name: selectedEvent.name,
+        waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+        queueSize: capacityEvent.currentCount || 0,
+        queueCapacity: capacityEvent.capacity || 100,
+        throughput: 240,
+        status: 'open',
+        autoCalculateWait: true,
+      };
+      setAttractions([defaultLine]);
+      return;
+    }
+
+    const attractionsFromQueues: Attraction[] = (capacityEvent.queues || []).map((queue) => ({
+      id: queue.id,
+      name: queue.name,
+      waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+      queueSize: queue.currentCount || 0,
+      queueCapacity: queue.capacity,
+      throughput: 240,
+      status: 'open',
+      autoCalculateWait: true,
+    }));
+
+    setAttractions(attractionsFromQueues);
+  }, [selectedEvent]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -327,12 +381,22 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                 : selectedEvent?.name || 'Capacity Management'}
           </p>
         </div>
-        <button
-          onClick={onLogout}
-          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-        >
-          <LogOut className="w-6 h-6" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowProfile(true)}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            title="Profile"
+          >
+            
+          </button>
+          <button
+            onClick={onLogout}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            title="Logout"
+          >
+            <LogOut className="w-6 h-6" />
+          </button>
+        </div>
       </div>
 
       {menuOpen && (
@@ -347,7 +411,27 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
             }`}
           >
             <div className="font-semibold">Dashboard</div>
-            <div className="text-sm text-gray-600">View all events</div>
+            
+          </button>
+          <button
+            onClick={() => {
+              setShowProfile(true);
+              setMenuOpen(false);
+            }}
+            className="w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200"
+          >
+            <div className="font-semibold">Profile</div>
+            
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              onLogout();
+            }}
+            className="w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200 text-red-600"
+          >
+            <div className="font-semibold">Logout</div>
+            
           </button>
         </div>
       )}
@@ -396,56 +480,89 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                   const TypeIcon = event.type === 'capacity-based' ? Users : Users;
                   
                   const currentCount = event.type === 'capacity-based' 
-                    ? event.currentCount 
+                    ? waitlist.filter(e => e.eventId === event.id).length
                     : event.currentFilledTables;
                   
                   const maxCount = event.type === 'capacity-based'
-                    ? event.capacity
-                    : event.numberOfTables;
+                    ? (event as CapacityBasedEvent).queueMode === 'multiple'
+                      ? ((event as CapacityBasedEvent).queues?.reduce((sum, q) => sum + q.capacity, 0) || 0)
+                      : (event.capacity || 0)
+                    : (event.numberOfTables || 0);
 
                   return (
-                    <button
+                    <div
                       key={event.id}
-                      onClick={() => {
-                        setSelectedEvent(event);
-                        if (event.type === 'capacity-based') {
-                          setCurrentPage('capacity');
-                        } else {
-                          setCurrentPage('waitlist');
-                          setWaitlistSubPage('view');
-                        }
-                      }}
-                      className={`bg-white rounded-xl shadow-md hover:shadow-xl transition-all p-6 text-left border-2 border-transparent hover:border-${typeColor}-500 group`}
+                      className={`bg-white rounded-xl shadow-md hover:shadow-xl transition-all p-6 text-left border-2 border-transparent hover:border-${typeColor}-500 group relative`}
                     >
-                      <div className="flex items-start justify-between mb-4">
-                        <div className={`w-12 h-12 bg-${typeColor}-100 rounded-lg flex items-center justify-center group-hover:bg-${typeColor}-500 transition-colors`}>
-                          <TypeIcon className={`w-6 h-6 text-${typeColor}-600 group-hover:text-white`} />
-                        </div>
-                        <span className={`text-xs px-3 py-1 rounded-full font-medium ${statusColor}`}>
-                          {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
-                        </span>
-                      </div>
-                      
-                      <h3 className="text-xl font-bold text-gray-800 mb-2">{event.name}</h3>
-                      
-                      <div className="flex items-center gap-2 mb-4">
-                        <span className="text-sm text-gray-600">
-                          {event.type === 'capacity-based' ? 'Capacity-Based' : 'Table-Based'}
-                        </span>
+                      {/* Action Buttons - Top Right */}
+                      <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedEvent(event);
+                            setShowQRCodeModal(true);
+                          }}
+                          className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg"
+                          title="View QR Code"
+                        >
+                          <QrCode className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEventToDelete(event);
+                            setShowDeleteConfirmation(true);
+                          }}
+                          className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg"
+                          title="Delete event"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1">
-                          <div className="text-2xl font-bold text-gray-800">
-                            {currentCount} <span className="text-sm font-normal text-gray-500">/ {maxCount}</span>
+                      {/* Event Card Content - Make it clickable */}
+                      <div
+                        onClick={() => {
+                          setSelectedEvent(event);
+                          if (event.type === 'capacity-based') {
+                            setCurrentPage('capacity');
+                          } else {
+                            setCurrentPage('waitlist');
+                            setWaitlistSubPage('view');
+                          }
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div className={`w-12 h-12 bg-${typeColor}-100 rounded-lg flex items-center justify-center group-hover:bg-${typeColor}-500 transition-colors`}>
+                            <TypeIcon className={`w-6 h-6 text-${typeColor}-600 group-hover:text-white`} />
                           </div>
-                          <div className="text-xs text-gray-500">
-                            {event.type === 'capacity-based' ? 'In Queue' : 'Tables Filled'}
-                          </div>
+                          <span className={`text-xs px-3 py-1 rounded-full font-medium ${statusColor}`}>
+                            {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
+                          </span>
                         </div>
-                        <div className="text-2xl font-bold text-gray-300 group-hover:text-blue-500 transition-colors">→</div>
+                        
+                        <h3 className="text-xl font-bold text-gray-800 mb-2">{event.name}</h3>
+                        
+                        <div className="flex items-center gap-2 mb-4">
+                          <span className="text-sm text-gray-600">
+                            {event.type === 'capacity-based' ? 'Capacity-Based' : 'Table-Based'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1">
+                            <div className="text-2xl font-bold text-gray-800">
+                              {currentCount} <span className="text-sm font-normal text-gray-500">/ {maxCount}</span>
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {event.type === 'capacity-based' ? 'In Queue' : 'Tables Filled'}
+                            </div>
+                          </div>
+                          <div className="text-2xl font-bold text-gray-300 group-hover:text-blue-500 transition-colors">→</div>
+                        </div>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -457,16 +574,18 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
           <div className="p-4 space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-bold">Queue Lines</h2>
-              <button
-                onClick={() => {
-                  setEditingAttraction(null);
-                  setShowAttractionModal(true);
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 active:scale-95 transition-transform"
-              >
-                <Plus className="w-4 h-4" />
-                Add Line
-              </button>
+              {selectedEvent && selectedEvent.type === 'capacity-based' && (selectedEvent as CapacityBasedEvent).queueMode === 'multiple' && (
+                <button
+                  onClick={() => {
+                    setEditingAttraction(null);
+                    setShowAttractionModal(true);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 active:scale-95 transition-transform"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Line
+                </button>
+              )}
             </div>
 
             <div className="grid gap-4">
@@ -485,6 +604,8 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                   ? calculateWaitTime(actualQueueSize, attraction.throughput)
                   : attraction.waitTime;
 
+                const isSingleQueueEvent = selectedEvent && selectedEvent.type === 'capacity-based' && (selectedEvent as CapacityBasedEvent).queueMode === 'single';
+
                 return (
                   <div key={attraction.id} className="bg-white rounded-lg shadow-md p-4 border-2 border-gray-200">
                     <div className="flex justify-between items-start mb-3">
@@ -499,27 +620,45 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            setEditingAttraction(attraction);
-                            setShowAttractionModal(true);
-                          }}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4 text-gray-600" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm(`Delete ${attraction.name}?`)) {
-                              setAttractions(attractions.filter(a => a.id !== attraction.id));
-                              toast.success(`${attraction.name} deleted`);
-                              simulateSync();
-                            }
-                          }}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
+                        {/* QR Code button for multiple-queue events */}
+                        {!isSingleQueueEvent && (
+                          <button
+                            onClick={() => {
+                              setSelectedQueueId(attraction.id);
+                              setSelectedQueueName(attraction.name);
+                              setShowQRCodeModal(true);
+                            }}
+                            className="p-2 bg-purple-50 hover:bg-purple-100 text-purple-600 rounded-lg transition-colors"
+                            title="View Queue QR Code"
+                          >
+                            <QrCode className="w-4 h-4" />
+                          </button>
+                        )}
+                        {!isSingleQueueEvent && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setEditingAttraction(attraction);
+                                setShowAttractionModal(true);
+                              }}
+                              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              <Edit2 className="w-4 h-4 text-gray-600" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Delete ${attraction.name}?`)) {
+                                  setAttractions(attractions.filter(a => a.id !== attraction.id));
+                                  toast.success(`${attraction.name} deleted`);
+                                  simulateSync();
+                                }
+                              }}
+                              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-600" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -977,8 +1116,100 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
           onClose={() => setShowCreateEventModal(false)}
           onCreateEvent={(event) => {
             addEvent(event);
-            setEvents(getStoredEvents());
+            setEvents(getStoredEvents().filter((storedEvent) => !user.businessId || storedEvent.businessId === user.businessId));
           }}
+        />
+      )}
+
+      {/* Profile Modal */}
+      {showProfile && (
+        <Profile
+          user={user}
+          onClose={() => setShowProfile(false)}
+          onLogout={onLogout}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmation && eventToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            {/* Warning Icon */}
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 className="w-8 h-8 text-red-600" />
+            </div>
+            
+            <h3 className="text-2xl font-bold text-center mb-2">
+              Delete Event?
+            </h3>
+            
+            <p className="text-center text-gray-600 mb-4">
+              You're about to delete the <span className="font-semibold text-gray-900">"{eventToDelete.name}"</span> event
+            </p>
+            
+            {/* Warning Card */}
+            <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-white text-sm font-bold">!</span>
+                </div>
+                <div>
+                  <h4 className="font-semibold text-red-900 mb-1">Warning: This action cannot be undone</h4>
+                  <ul className="text-sm text-red-800 space-y-1">
+                    <li>• The event will be permanently deleted</li>
+                    <li>• All waitlist entries will be removed</li>
+                    <li>• Event data cannot be recovered</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirmation(false);
+                  setEventToDelete(null);
+                }}
+                className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 font-semibold active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (eventToDelete) {
+                    deleteEvent(eventToDelete.id);
+                    // Also remove all waitlist entries for this event
+                    setWaitlist(waitlist.filter(w => w.eventId !== eventToDelete.id));
+                    toast.success(`Event \"${eventToDelete.name}\" deleted successfully`);
+                    // Refresh events
+                    const updatedEvents = getStoredEvents().filter(e => e.businessId === user.businessId);
+                    setEvents(updatedEvents);
+                  }
+                  setShowDeleteConfirmation(false);
+                  setEventToDelete(null);
+                }}
+                className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-semibold active:scale-95 transition-transform shadow-lg"
+              >
+                Delete Event
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Modal */}
+      {showQRCodeModal && selectedEvent && (
+        <QRCodeModal
+          event={selectedEvent}
+          onClose={() => {
+            setShowQRCodeModal(false);
+            setSelectedQueueId(undefined);
+            setSelectedQueueName(undefined);
+          }}
+          queueId={selectedQueueId}
+          queueName={selectedQueueName}
         />
       )}
     </div>

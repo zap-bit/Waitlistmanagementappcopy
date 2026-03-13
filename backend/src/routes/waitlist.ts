@@ -13,10 +13,10 @@ waitlistRouter.get('/', (req, res, next) => {
 
 waitlistRouter.post('/', (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
-  const { name, partySize, type = 'waitlist', specialRequests } = req.body ?? {};
+  const { name, partySize, type = 'waitlist', specialRequests, queueId } = req.body ?? {};
   if (!name || !partySize) return next(new ApiError(400, 'INVALID_INPUT', 'name and partySize are required'));
 
-  const entry = addWaitlistEntry(eventId, { name, partySize, type, specialRequests });
+  const entry = addWaitlistEntry(eventId, { name, partySize, type, specialRequests, queueId });
   if (!entry) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId }));
 
   return res.status(201).json(entry);
@@ -37,10 +37,10 @@ waitlistRouter.delete('/:entryId', (req, res, next) => {
   const event = db.events.get(eventId);
   if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
 
-  const exists = event.waitlist.some((item) => item.id === entryId);
-  if (!exists) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
+  const removedEntry = event.waitlist.find((item) => item.id === entryId);
+  if (!removedEntry) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
 
   event.waitlist = event.waitlist.filter((item) => item.id !== entryId);
-  recalcQueuePositions(eventId);
+  recalcQueuePositions(eventId, removedEntry.queueId);
   return res.json({ ok: true });
 });

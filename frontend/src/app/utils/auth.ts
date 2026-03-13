@@ -12,8 +12,80 @@ export interface Business {
   ownerId: string;
 }
 
+
+const DEMO_USERS: User[] = [
+  {
+    id: 'staff-demo',
+    email: 'admin@demo.com',
+    name: 'Demo Manager',
+    role: 'staff',
+    businessId: 'biz-demo',
+  },
+  {
+    id: 'user-demo',
+    email: 'guest@demo.com',
+    name: 'Demo Guest',
+    role: 'user',
+  },
+];
+
+const DEMO_PASSWORDS: Record<string, string> = {
+  'staff-demo': 'password123',
+  'user-demo': 'password123',
+};
+
+const DEMO_BUSINESSES: Business[] = [
+  {
+    id: 'biz-demo',
+    name: 'Figma Demo Restaurant',
+    ownerId: 'staff-demo',
+  },
+];
+
+const ensureDemoData = () => {
+  if (typeof window === 'undefined') return;
+
+  const users = getUsersDb();
+  const passwords = getPasswordsDb();
+  const businesses = getBusinessesDb();
+
+  let changed = false;
+
+  for (const demoUser of DEMO_USERS) {
+    const existingUser = users.find(
+      (u) => u.id === demoUser.id || u.email.toLowerCase() === demoUser.email.toLowerCase(),
+    );
+
+    const userIdToSeed = existingUser?.id ?? demoUser.id;
+
+    if (!existingUser) {
+      users.push(demoUser);
+      changed = true;
+    }
+
+    if (!passwords[userIdToSeed]) {
+      passwords[userIdToSeed] = DEMO_PASSWORDS[demoUser.id];
+      changed = true;
+    }
+  }
+
+  for (const business of DEMO_BUSINESSES) {
+    if (!businesses.find((b) => b.id === business.id)) {
+      businesses.push(business);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    saveUsersDb(users);
+    savePasswordsDb(passwords);
+    saveBusinessesDb(businesses);
+  }
+};
+
 // Auth state management
 export const getStoredUser = (): User | null => {
+  ensureDemoData();
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('currentUser');
     if (saved) {
@@ -100,6 +172,7 @@ const saveBusinessesDb = (businesses: Business[]) => {
 
 // Login function
 export const login = (email: string, password: string): User | null => {
+  ensureDemoData();
   const users = getUsersDb();
   const passwords = getPasswordsDb();
   
@@ -119,6 +192,7 @@ export const login = (email: string, password: string): User | null => {
 
 // Sign up user account
 export const signupUser = (email: string, password: string, name: string): User | null => {
+  ensureDemoData();
   const users = getUsersDb();
   const passwords = getPasswordsDb();
   
@@ -151,6 +225,7 @@ export const signupBusiness = (
   ownerName: string,
   businessName: string
 ): User | null => {
+  ensureDemoData();
   const users = getUsersDb();
   const passwords = getPasswordsDb();
   const businesses = getBusinessesDb();

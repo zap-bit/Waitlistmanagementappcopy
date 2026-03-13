@@ -1,6 +1,14 @@
 // Simplified event types for multi-business support
 export type EventType = 'capacity-based' | 'table-based';
 export type EventStatus = 'active' | 'paused' | 'closed';
+export type QueueMode = 'single' | 'multiple';
+
+export interface Queue {
+  id: string;
+  name: string;
+  capacity: number;
+  currentCount: number;
+}
 
 export interface BaseEvent {
   id: string;
@@ -13,10 +21,12 @@ export interface BaseEvent {
 
 export interface CapacityBasedEvent extends BaseEvent {
   type: 'capacity-based';
-  capacity: number;
+  queueMode: QueueMode;
+  capacity: number; // Used for single queue mode
   estimatedWaitPerPerson: number; // minutes
   location: string;
-  currentCount: number; // Number of people in queue/waiting
+  currentCount: number; // Number of people in queue/waiting (single mode)
+  queues?: Queue[]; // Array of queues for multiple mode
 }
 
 export interface TableBasedEvent extends BaseEvent {
