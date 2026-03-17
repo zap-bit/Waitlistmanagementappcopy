@@ -6,6 +6,7 @@ import { waitlistRouter } from './routes/waitlist.js';
 import { staffRouter } from './routes/staff.js';
 import { syncRouter } from './routes/sync.js';
 import { errorHandler, notFound } from './middleware/error.js';
+import { isSupabaseConfigured } from './lib/supabase.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8000);
@@ -13,7 +14,7 @@ const port = Number(process.env.PORT || 8000);
 app.use(cors());
 app.use(express.json());
 
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true, supabaseConfigured: isSupabaseConfigured() }));
 
 app.use('/v1/auth', authRouter);
 app.use('/v1/events', eventsRouter);

@@ -142,7 +142,7 @@ export default function App() {
       // Auto-select role based on user type
       setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
     } else {
-      setAuthScreen('welcome');
+      setAuthScreen('login');
     }
   }, []);
 
@@ -164,7 +164,7 @@ export default function App() {
     setSelectedRole(null);
     authLogout();
     setUser(null);
-    setAuthScreen('welcome');
+    setAuthScreen('login');
   };
 
   const handleLogin = (email: string, password: string) => {
