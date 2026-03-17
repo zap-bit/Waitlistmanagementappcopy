@@ -34,3 +34,11 @@ The backend exposes `http://localhost:8000/v1` with boilerplate routes for:
 - Waitlist (`/events/:eventId/waitlist`)
 - Staff (`/events/:eventId/staff/dashboard`, `/staff/promote`, `/staff/seat`)
 - Sync (`/sync`)
+
+## Supabase (Option A)
+
+If you want Supabase persistence while keeping this frontend/backend architecture, follow:
+
+- `SUPABASE_OPTION_A_SETUP.md`
+
+The backend now includes a Supabase client scaffold at `backend/src/lib/supabase.ts` and exposes `/health` status showing `supabaseConfigured`.
