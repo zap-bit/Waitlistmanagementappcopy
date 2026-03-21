@@ -30,6 +30,7 @@ export interface WaitlistEntry {
   type: 'reservation' | 'waitlist';
   eventId?: string;
   queueId?: string; // For multiple-queue capacity events
+  reservationTime?: Date; // Optional time for reservation
 }
 
 const getInitialWaitlist = (): WaitlistEntry[] => {
@@ -42,6 +43,7 @@ const getInitialWaitlist = (): WaitlistEntry[] => {
           ...entry,
           joinedAt: new Date(entry.joinedAt),
           type: entry.type || 'waitlist', // Default to 'waitlist' if type is missing
+          reservationTime: entry.reservationTime ? new Date(entry.reservationTime) : undefined,
         }));
       } catch (e) {
         console.error('Error loading waitlist from localStorage:', e);
@@ -144,7 +146,7 @@ export default function App() {
       // Auto-select role based on user type
       setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
     } else {
-      setAuthScreen('login');
+      setAuthScreen('welcome');
     }
   }, []);
 
@@ -166,7 +168,7 @@ export default function App() {
     setSelectedRole(null);
     authLogout();
     setUser(null);
-    setAuthScreen('login');
+    setAuthScreen('welcome');
   };
 
   const handleLogin = (email: string, password: string) => {
@@ -205,7 +207,7 @@ export default function App() {
     }
   };
 
-  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string) => {
+  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => {
     // Calculate estimated wait based on event settings
     let estimatedWait = 15; // Default fallback
     
@@ -247,6 +249,7 @@ export default function App() {
       type,
       eventId,
       queueId,
+      reservationTime,
     };
     setWaitlist((prev) => [...prev, newEntry]);
     return newEntry.id;
@@ -254,6 +257,12 @@ export default function App() {
 
   const removeFromWaitlist = (id: string) => {
     setWaitlist((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  const updateWaitlistEntry = (id: string, updates: Partial<Omit<WaitlistEntry, 'id' | 'joinedAt'>>) => {
+    setWaitlist((prev) => prev.map((entry) => 
+      entry.id === id ? { ...entry, ...updates } : entry
+    ));
   };
 
   // Show auth screens if not logged in
@@ -323,6 +332,7 @@ export default function App() {
           waitlist={waitlist}
           addToWaitlist={addToWaitlist}
           removeFromWaitlist={removeFromWaitlist}
+          updateWaitlistEntry={updateWaitlistEntry}
           allWaitlistEntries={waitlist}
           tables={tables}
           user={user!}
