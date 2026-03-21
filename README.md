@@ -42,3 +42,8 @@ If you want Supabase persistence while keeping this frontend/backend architectur
 - `SUPABASE_OPTION_A_SETUP.md`
 
 The backend now includes a Supabase client scaffold at `backend/src/lib/supabase.ts` and exposes `/health` status showing `supabaseConfigured`.
+
+## Production Readiness
+
+For an always-current list of production blockers, spec divergences, and required release work, see `PRODUCTION_CHECKLIST.md`.
+For the continuously maintained phase-by-phase progress view, see `SPEC_PROGRESS_ASSESSMENT.md`.
