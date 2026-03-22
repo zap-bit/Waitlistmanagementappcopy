@@ -1,4 +1,4 @@
-// Simplified event types for multi-business support
+// Simplified event types for UI state and API caching
 export type EventType = 'capacity-based' | 'table-based';
 export type EventStatus = 'active' | 'paused' | 'closed';
 
@@ -14,80 +14,38 @@ export interface BaseEvent {
 export interface CapacityBasedEvent extends BaseEvent {
   type: 'capacity-based';
   capacity: number;
-  estimatedWaitPerPerson: number; // minutes
+  estimatedWaitPerPerson: number;
   location: string;
-  currentCount: number; // Number of people in queue/waiting
+  currentCount: number;
 }
 
 export interface TableBasedEvent extends BaseEvent {
   type: 'table-based';
   numberOfTables: number;
   averageTableSize: number;
-  reservationDuration: number; // minutes
+  reservationDuration: number;
   noShowPolicy: string;
   currentFilledTables: number;
 }
 
 export type Event = CapacityBasedEvent | TableBasedEvent;
 
-// Get all events
 export const getStoredEvents = (): Event[] => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('events');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return parsed.map((event: any) => ({
-          ...event,
-          createdAt: new Date(event.createdAt),
-        }));
-      } catch (e) {
-        console.error('Error loading events from localStorage:', e);
-      }
-    }
+  if (typeof window === 'undefined') return [];
+  const saved = localStorage.getItem('events');
+  if (!saved) return [];
+  try {
+    const parsed = JSON.parse(saved);
+    return parsed.map((event: Event & { createdAt: string }) => ({
+      ...event,
+      createdAt: new Date(event.createdAt),
+    }));
+  } catch {
+    return [];
   }
-  return [];
 };
 
-// Save events
 export const saveEvents = (events: Event[]) => {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('events', JSON.stringify(events));
-  }
-};
-
-// Add a new event
-export const addEvent = (event: Event) => {
-  const events = getStoredEvents();
-  events.push(event);
-  saveEvents(events);
-};
-
-// Update an event
-export const updateEvent = (eventId: string, updates: Partial<Event>) => {
-  const events = getStoredEvents();
-  const index = events.findIndex(e => e.id === eventId);
-  if (index !== -1) {
-    events[index] = { ...events[index], ...updates };
-    saveEvents(events);
-  }
-};
-
-// Delete an event
-export const deleteEvent = (eventId: string) => {
-  const events = getStoredEvents();
-  const filtered = events.filter(e => e.id !== eventId);
-  saveEvents(filtered);
-};
-
-// Get events by business
-export const getEventsByBusiness = (businessId: string): Event[] => {
-  const events = getStoredEvents();
-  return events.filter(e => e.businessId === businessId);
-};
-
-// Get event by ID
-export const getEventById = (eventId: string): Event | null => {
-  const events = getStoredEvents();
-  return events.find(e => e.id === eventId) || null;
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('events', JSON.stringify(events));
 };

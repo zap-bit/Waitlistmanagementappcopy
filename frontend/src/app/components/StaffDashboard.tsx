@@ -6,8 +6,7 @@ import { CreateEventModal } from './CreateEventModal';
 import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
-import { Event, getStoredEvents, addEvent, deleteEvent } from '../utils/events';
-import { getStoredUser } from '../utils/auth';
+import { Event } from '../utils/events';
 
 interface Attraction {
   id: string;
@@ -26,6 +25,15 @@ interface StaffDashboardProps {
   setWaitlist: React.Dispatch<React.SetStateAction<WaitlistEntry[]>>;
   tables: Table[];
   setTables: React.Dispatch<React.SetStateAction<Table[]>>;
+  events: Event[];
+  selectedEventId: string;
+  onSelectEvent: (eventId: string) => void;
+  onRefresh: () => Promise<void>;
+  onCreateEvent: (event: Event) => Promise<void>;
+  onDeleteEvent: (eventId: string) => Promise<void>;
+  onPromote: (entryId: string) => Promise<void>;
+  onRemoveEntry: (entryId: string) => Promise<void>;
+  onClearTable: (tableId: number) => Promise<void>;
 }
 
 const getStoredNumber = (key: string, defaultValue: number): number => {
@@ -61,7 +69,7 @@ const calculateWaitTime = (queueSize: number, throughput: number): number => {
   return Math.round((queueSize / throughput) * 60);
 };
 
-export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables }: StaffDashboardProps) {
+export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables, events, selectedEventId, onSelectEvent, onRefresh, onCreateEvent, onDeleteEvent, onPromote, onRemoveEntry, onClearTable }: StaffDashboardProps) {
   const [currentCapacity, setCurrentCapacity] = useState(() => getStoredNumber('currentCapacity', 45));
   const [maxCapacity, setMaxCapacity] = useState(() => getStoredNumber('maxCapacity', 100));
   const [isOnline, setIsOnline] = useState(() => getStoredBoolean('isOnline', true));
@@ -72,11 +80,15 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
   const [menuOpen, setMenuOpen] = useState(false);
   const [totalTables, setTotalTables] = useState(() => getStoredNumber('totalTables', 12));
   const [showCreateEventModal, setShowCreateEventModal] = useState(false);
-  const [events, setEvents] = useState<Event[]>(getStoredEvents);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [attractions, setAttractions] = useState<Attraction[]>([]);
   const [showAttractionModal, setShowAttractionModal] = useState(false);
   const [editingAttraction, setEditingAttraction] = useState<Attraction | null>(null);
+
+  useEffect(() => {
+    const nextSelectedEvent = events.find((event) => event.id === selectedEventId) || null;
+    setSelectedEvent(nextSelectedEvent);
+  }, [events, selectedEventId]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -121,37 +133,13 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
-  const handlePromote = (id: string) => {
-    const entry = waitlist.find((e) => e.id === id);
-    if (!entry) return;
-
-    const availableTable = tables.find(
-      (t) => !t.occupied && t.capacity >= entry.partySize
-    );
-
-    if (availableTable) {
-      setTables(
-        tables.map((t) =>
-          t.id === availableTable.id
-            ? {
-                ...t,
-                occupied: true,
-                guestName: entry.name,
-                partySize: entry.partySize,
-                seatedAt: new Date(),
-              }
-            : t
-        )
-      );
-      setWaitlist(waitlist.filter((e) => e.id !== id));
-      toast.success(`${entry.name} seated at ${availableTable.name}`, {
-        description: `Party of ${entry.partySize}`,
-      });
+  const handlePromote = async (id: string) => {
+    try {
+      await onPromote(id);
+      toast.success('Guest promoted and seated');
       simulateSync();
-    } else {
-      toast.error('No available tables for this party size', {
-        description: `Need table for ${entry.partySize} guests`,
-      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to seat guest');
     }
   };
 
@@ -195,41 +183,27 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
-  const handleNoShow = (id: string) => {
+  const handleNoShow = async (id: string) => {
     const entry = waitlist.find((e) => e.id === id);
     if (!entry) return;
 
-    setWaitlist(waitlist.filter((e) => e.id !== id));
+    await onRemoveEntry(id);
     toast.error(`${entry.name} marked as no-show`);
     simulateSync();
   };
 
-  const handleClearTable = (tableId: number) => {
+  const handleClearTable = async (tableId: number) => {
     const table = tables.find((t) => t.id === tableId);
     if (!table) return;
 
-    setTables(
-      tables.map((t) =>
-        t.id === tableId
-          ? { ...t, occupied: false, guestName: undefined, partySize: undefined, seatedAt: undefined }
-          : t
-      )
-    );
+    await onClearTable(tableId);
     toast.success(`${table.name} cleared`);
     simulateSync();
   };
 
-  const handleClearAllTables = () => {
+  const handleClearAllTables = async () => {
     if (confirm('Clear all tables? This will remove all guests.')) {
-      setTables(
-        tables.map((t) => ({
-          ...t,
-          occupied: false,
-          guestName: undefined,
-          partySize: undefined,
-          seatedAt: undefined,
-        }))
-      );
+      await Promise.all(tables.filter((t) => t.occupied).map((t) => onClearTable(t.id)));
       toast.success('All tables cleared');
       simulateSync();
     }
@@ -973,11 +947,11 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
       {/* Create Event Modal */}
       {showCreateEventModal && (
         <CreateEventModal
-          businessId={getStoredUser()?.businessId || 'default'}
+          businessId={selectedEvent?.businessId || events[0]?.businessId || 'spec-gap-business'}
           onClose={() => setShowCreateEventModal(false)}
-          onCreateEvent={(event) => {
-            addEvent(event);
-            setEvents(getStoredEvents());
+          onCreateEvent={async (event) => {
+            await onCreateEvent(event);
+            setShowCreateEventModal(false);
           }}
         />
       )}

@@ -5,18 +5,20 @@ import { QrCode, Clock, Users, LogOut, X, Calendar, ListOrdered, Search, Ticket 
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
 import { Table } from './TableGrid';
-import { getStoredEvents, Event } from '../utils/events';
+import { Event } from '../utils/events';
 
 interface AttendeeViewProps {
   onLogout: () => void;
   waitlist: WaitlistEntry[];
-  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string) => string;
-  removeFromWaitlist: (id: string) => void;
+  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string) => Promise<string>;
+  removeFromWaitlist: (id: string, eventId?: string) => void;
   allWaitlistEntries: WaitlistEntry[];
   tables: Table[];
+  events: Event[];
+  refreshEntries: () => Promise<void>;
 }
 
-export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWaitlist, allWaitlistEntries, tables }: AttendeeViewProps) {
+export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWaitlist, allWaitlistEntries, tables, events, refreshEntries }: AttendeeViewProps) {
   const [myWaitlistIds, setMyWaitlistIds] = useState<string[]>(() => {
     if (typeof window !== 'undefined') {
       const savedIds = localStorage.getItem('myWaitlistIds');
@@ -64,9 +66,8 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
 
   // Load available events on mount
   useEffect(() => {
-    const events = getStoredEvents().filter(e => e.status === 'active');
-    setAvailableEvents(events);
-  }, []);
+    setAvailableEvents(events.filter((event) => event.status === 'active'));
+  }, [events]);
 
   // Persist attendee state to localStorage
   useEffect(() => {
@@ -99,7 +100,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
   const sameTypeAndEventEntries = myEntry 
     ? allWaitlistEntries.filter(e => e.type === myEntry.type && e.eventId === myEntry.eventId) 
     : [];
-  const position = myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === myEntry.id) + 1 : 0;
+  const position = myEntry?.position || (myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === myEntry.id) + 1 : 0);
   const estimatedWaitMinutes = myEntry ? (myEntry.estimatedWait > 0 ? myEntry.estimatedWait : Math.max(5, position * 8)) : 0;
   
   // Check if all tables are occupied
@@ -186,7 +187,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     }
   };
 
-  const handleJoinManually = () => {
+  const handleJoinManually = async () => {
     if (!guestName.trim()) {
       toast.error('Please enter your name');
       return;
@@ -197,7 +198,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       return;
     }
 
-    const id = addToWaitlist(
+    const id = await addToWaitlist(
       guestName, 
       partySize, 
       specialRequests.trim() || undefined, 
@@ -226,12 +227,12 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     setTimeout(() => setIsSyncing(false), 1500);
   };
 
-  const handleAddAnother = () => {
+  const handleAddAnother = async () => {
     if (!guestName.trim()) {
       toast.error('Please enter guest name');
       return;
     }
-    addToWaitlist(guestName, partySize, specialRequests.trim() || undefined, 'waitlist', myEntry?.eventId);
+    await addToWaitlist(guestName, partySize, specialRequests.trim() || undefined, 'waitlist', myEntry?.eventId);
     setIsSyncing(true);
     toast.success(`${guestName} added to the waitlist!`);
     // Reset form
@@ -242,10 +243,10 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     setTimeout(() => setIsSyncing(false), 1500);
   };
 
-  const handleLeaveWaitlist = () => {
+  const handleLeaveWaitlist = async () => {
     if (myEntry) {
       const entryType = myEntry?.type;
-      removeFromWaitlist(myEntry.id);
+      removeFromWaitlist(myEntry.id, myEntry.eventId);
       setMyWaitlistIds((prev) => prev.filter((id) => id !== myEntry.id));
       setActiveWaitlistId((prev) => (prev === myEntry.id ? null : prev));
       setViewingStatus(false);
