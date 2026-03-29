@@ -87,38 +87,38 @@ export default function App() {
   };
 
   const handleLogin = async (email: string, password: string) => {
-    const loggedInUser = await authLogin(email, password);
-    if (loggedInUser) {
+    try {
+      const loggedInUser = await authLogin(email, password);
       setUser(loggedInUser);
       setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
       setAuthScreen(null);
       toast.success(`Welcome back, ${loggedInUser.name}!`);
-    } else {
-      toast.error('Invalid email or password');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Invalid email or password');
     }
   };
 
   const handleSignupUser = async (email: string, password: string, name: string) => {
-    const newUser = await authSignupUser(email, password, name);
-    if (newUser) {
+    try {
+      const newUser = await authSignupUser(email, password, name);
       setUser(newUser);
       setSelectedRole('attendee');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}!`);
-    } else {
-      toast.error('Email already exists');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to create account');
     }
   };
 
   const handleSignupBusiness = async (email: string, password: string, ownerName: string, businessName: string) => {
-    const newUser = await authSignupBusiness(email, password, ownerName, businessName);
-    if (newUser) {
+    try {
+      const newUser = await authSignupBusiness(email, password, ownerName, businessName);
       setUser(newUser);
       setSelectedRole('staff');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}! Your business "${businessName}" has been created.`);
-    } else {
-      toast.error('Email already exists');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to create business account');
     }
   };
 

@@ -16,6 +16,19 @@ export interface Business {
 
 let currentUser: User | null = null;
 
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const raw = error.message;
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart === -1) return raw || fallback;
+  try {
+    const parsed = JSON.parse(raw.slice(jsonStart)) as { message?: string };
+    return parsed.message || raw || fallback;
+  } catch {
+    return raw || fallback;
+  }
+}
+
 export const getStoredUser = (): User | null => currentUser;
 
 export const setStoredUser = (user: User | null) => {
@@ -37,23 +50,23 @@ export const loadCurrentUser = async (): Promise<User | null> => {
   }
 };
 
-export const login = async (email: string, password: string): Promise<User | null> => {
+export const login = async (email: string, password: string): Promise<User> => {
   try {
     const response = await apiClient.login({ email, password });
     currentUser = response.user;
     return response.user;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(toErrorMessage(error, 'Login failed'));
   }
 };
 
-export const signupUser = async (email: string, password: string, name: string): Promise<User | null> => {
+export const signupUser = async (email: string, password: string, name: string): Promise<User> => {
   try {
     const response = await apiClient.signupUser({ email, password, name });
     currentUser = response.user;
     return response.user;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(toErrorMessage(error, 'Signup failed'));
   }
 };
 
@@ -62,13 +75,13 @@ export const signupBusiness = async (
   password: string,
   ownerName: string,
   businessName: string
-): Promise<User | null> => {
+): Promise<User> => {
   try {
     const response = await apiClient.signupBusiness({ email, password, ownerName, businessName });
     currentUser = response.user;
     return response.user;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(toErrorMessage(error, 'Business signup failed'));
   }
 };
 
