@@ -8,8 +8,8 @@ import { QRCodeModal } from './QRCodeModal';
 import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2, User as UserIcon, QrCode, Archive, ArchiveRestore } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
-import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent } from '../utils/events';
-import { getStoredUser, User } from '../utils/auth';
+import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent, syncEventsFromApi } from '../utils/events';
+import { User } from '../utils/auth';
 import { Profile } from './Profile';
 
 interface Attraction {
@@ -32,33 +32,9 @@ interface StaffDashboardProps {
   user: User;
 }
 
-const getStoredNumber = (key: string, defaultValue: number): number => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(`Error loading ${key} from localStorage:`, e);
-      }
-    }
-  }
-  return defaultValue;
-};
+const getStoredNumber = (_key: string, defaultValue: number): number => defaultValue;
 
-const getStoredBoolean = (key: string, defaultValue: boolean): boolean => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(`Error loading ${key} from localStorage:`, e);
-      }
-    }
-  }
-  return defaultValue;
-};
+const getStoredBoolean = (_key: string, defaultValue: boolean): boolean => defaultValue;
 
 const calculateWaitTime = (queueSize: number, throughput: number): number => {
   if (throughput === 0) return 0;
@@ -66,25 +42,9 @@ const calculateWaitTime = (queueSize: number, throughput: number): number => {
 };
 
 // Helper functions to save/load tables per event
-const saveEventTables = (eventId: string, tables: Table[]) => {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(`tables_${eventId}`, JSON.stringify(tables));
-  }
-};
+const saveEventTables = (_eventId: string, _tables: Table[]) => {};
 
-const loadEventTables = (eventId: string): Table[] | null => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(`tables_${eventId}`);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(`Error loading tables for event ${eventId}:`, e);
-      }
-    }
-  }
-  return null;
-};
+const loadEventTables = (_eventId: string): Table[] | null => null;
 
 export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables, user }: StaffDashboardProps) {
   const [currentCapacity, setCurrentCapacity] = useState(() => getStoredNumber('currentCapacity', 45));
@@ -112,10 +72,14 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
 
   // Filter events by businessId on mount and refresh
   useEffect(() => {
-    const activeEvents = getActiveEvents().filter(e => e.businessId === user.businessId);
-    const archived = getArchivedEvents().filter(e => e.businessId === user.businessId);
-    setEvents(activeEvents);
-    setArchivedEvents(archived);
+    const refreshEvents = async () => {
+      await syncEventsFromApi();
+      const activeEvents = getActiveEvents().filter(e => e.businessId === user.businessId);
+      const archived = getArchivedEvents().filter(e => e.businessId === user.businessId);
+      setEvents(activeEvents);
+      setArchivedEvents(archived);
+    };
+    void refreshEvents();
   }, [user.businessId]);
 
   // Refresh events when navigating to home or archived pages
@@ -167,29 +131,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   }, [selectedEvent]);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('currentCapacity', JSON.stringify(currentCapacity));
-    }
-  }, [currentCapacity]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('totalTables', JSON.stringify(totalTables));
-    }
-  }, [totalTables]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('maxCapacity', JSON.stringify(maxCapacity));
-    }
-  }, [maxCapacity]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('isOnline', JSON.stringify(isOnline));
-    }
-  }, [isOnline]);
+  useEffect(() => {}, [currentCapacity, totalTables, maxCapacity, isOnline]);
 
   const simulateSync = () => {
     setIsSyncing(true);
@@ -1568,7 +1510,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
       {/* Create Event Modal */}
       {showCreateEventModal && (
         <CreateEventModal
-          businessId={getStoredUser()?.businessId || 'default'}
+          businessId={user.businessId || 'default'}
           onClose={() => setShowCreateEventModal(false)}
           onCreateEvent={(event) => {
             addEvent(event);

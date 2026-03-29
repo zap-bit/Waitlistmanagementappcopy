@@ -5,7 +5,6 @@ import react from '@vitejs/plugin-react'
 
 const workspaceRoot = searchForWorkspaceRoot(process.cwd())
 const projectRoot = path.resolve(__dirname, '..')
-const parentProjectDir = path.resolve(projectRoot, '..')
 
 export default defineConfig({
   plugins: [
@@ -22,9 +21,8 @@ export default defineConfig({
   },
   server: {
     fs: {
-      // Allow monorepo/workspace roots plus one parent level to avoid
-      // Vite allowlist failures when node_modules is resolved via a nearby clone.
-      allow: [workspaceRoot, projectRoot, parentProjectDir],
+      // Keep allow-list narrow: only workspace root and this project root.
+      allow: [workspaceRoot, projectRoot],
     },
   },
 

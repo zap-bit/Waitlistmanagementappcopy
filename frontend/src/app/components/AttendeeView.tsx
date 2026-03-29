@@ -5,7 +5,7 @@ import { QrCode, Clock, Users, LogOut, X, Calendar, ListOrdered, Search, Ticket,
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
 import { Table } from './TableGrid';
-import { getStoredEvents, Event, CapacityBasedEvent, Queue } from '../utils/events';
+import { getStoredEvents, Event, CapacityBasedEvent, Queue, syncEventsFromApi } from '../utils/events';
 import { Profile, getSavedProfile } from './Profile';
 import { User } from '../utils/auth';
 import { calculateDynamicWaitTime } from '../utils/waitTime';
@@ -24,16 +24,6 @@ interface AttendeeViewProps {
 export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWaitlist, updateWaitlistEntry, allWaitlistEntries, tables, user }: AttendeeViewProps) {
   // Store multiple waitlist IDs
   const [myWaitlistIds, setMyWaitlistIds] = useState<string[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('myWaitlistIds');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          return [];
-        }
-      }
-    }
     return [];
   });
   
@@ -73,42 +63,21 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
   const [selectedQueue, setSelectedQueue] = useState<Queue | null>(null);
   const [availableEvents, setAvailableEvents] = useState<Event[]>([]);
   const [isOnline, setIsOnline] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('attendeeIsOnline');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          return true;
-        }
-      }
-    }
     return true;
   });
   const [isSyncing, setIsSyncing] = useState(false);
 
   // Load available events on mount
   useEffect(() => {
-    const events = getStoredEvents().filter(e => e.status === 'active');
-    setAvailableEvents(events);
+    const loadEvents = async () => {
+      await syncEventsFromApi();
+      const events = getStoredEvents().filter(e => e.status === 'active');
+      setAvailableEvents(events);
+    };
+    void loadEvents();
   }, []);
 
-  // Persist attendee state to localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (myWaitlistIds.length > 0) {
-        localStorage.setItem('myWaitlistIds', JSON.stringify(myWaitlistIds));
-      } else {
-        localStorage.removeItem('myWaitlistIds');
-      }
-    }
-  }, [myWaitlistIds]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('attendeeIsOnline', JSON.stringify(isOnline));
-    }
-  }, [isOnline]);
+  useEffect(() => {}, [myWaitlistIds, isOnline]);
 
   // Find my entry in the waitlist or full list
   const myEntry = allWaitlistEntries.find((e) => e.id === selectedWaitlistId);

@@ -9,6 +9,7 @@ import { Toaster, toast } from 'sonner';
 import { Table } from './components/TableGrid';
 import { 
   getStoredUser, 
+  loadCurrentUser,
   login as authLogin, 
   signupUser as authSignupUser, 
   signupBusiness as authSignupBusiness,
@@ -33,84 +34,9 @@ export interface WaitlistEntry {
   reservationTime?: Date; // Optional time for reservation
 }
 
-const getInitialWaitlist = (): WaitlistEntry[] => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('waitlist');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return parsed.map((entry: any) => ({
-          ...entry,
-          joinedAt: new Date(entry.joinedAt),
-          type: entry.type || 'waitlist', // Default to 'waitlist' if type is missing
-          reservationTime: entry.reservationTime ? new Date(entry.reservationTime) : undefined,
-        }));
-      } catch (e) {
-        console.error('Error loading waitlist from localStorage:', e);
-      }
-    }
-  }
-  // Default demo data
-  return [
-    {
-      id: '1',
-      name: 'Sarah Johnson',
-      partySize: 4,
-      joinedAt: new Date(Date.now() - 15 * 60000),
-      estimatedWait: 25,
-      type: 'waitlist' as const,
-    },
-    {
-      id: '2',
-      name: 'Michael Chen',
-      partySize: 2,
-      joinedAt: new Date(Date.now() - 10 * 60000),
-      estimatedWait: 20,
-      type: 'reservation' as const,
-    },
-    {
-      id: '3',
-      name: 'Emily Rodriguez',
-      partySize: 6,
-      joinedAt: new Date(Date.now() - 8 * 60000),
-      estimatedWait: 30,
-      type: 'waitlist' as const,
-    },
-    {
-      id: '4',
-      name: 'David Thompson',
-      partySize: 3,
-      joinedAt: new Date(Date.now() - 5 * 60000),
-      estimatedWait: 15,
-      type: 'reservation' as const,
-    },
-    {
-      id: '5',
-      name: 'Jessica Lee',
-      partySize: 2,
-      joinedAt: new Date(Date.now() - 3 * 60000),
-      estimatedWait: 12,
-      type: 'waitlist' as const,
-    },
-  ];
-};
+const getInitialWaitlist = (): WaitlistEntry[] => [];
 
 const getInitialTables = (): Table[] => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('tables');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Convert date strings back to Date objects
-        return parsed.map((table: any) => ({
-          ...table,
-          seatedAt: table.seatedAt ? new Date(table.seatedAt) : undefined,
-        }));
-      } catch (e) {
-        console.error('Error loading tables from localStorage:', e);
-      }
-    }
-  }
   // Default tables
   const initialTables: Table[] = [];
   const defaultCapacities = [2, 2, 4, 4, 2, 4, 6, 6, 4, 4, 6, 8];
@@ -140,39 +66,27 @@ export default function App() {
 
   // Check for logged in user on mount
   useEffect(() => {
-    const storedUser = getStoredUser();
-    if (storedUser) {
-      setUser(storedUser);
-      // Auto-select role based on user type
-      setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
-    } else {
-      setAuthScreen('welcome');
-    }
+    const boot = async () => {
+      const storedUser = getStoredUser() || await loadCurrentUser();
+      if (storedUser) {
+        setUser(storedUser);
+        setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
+      } else {
+        setAuthScreen('welcome');
+      }
+    };
+    void boot();
   }, []);
 
-  // Persist waitlist to localStorage whenever it changes
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('waitlist', JSON.stringify(waitlist));
-    }
-  }, [waitlist]);
-
-  // Persist tables to localStorage whenever they change
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('tables', JSON.stringify(tables));
-    }
-  }, [tables]);
-
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setSelectedRole(null);
-    authLogout();
+    await authLogout();
     setUser(null);
     setAuthScreen('welcome');
   };
 
-  const handleLogin = (email: string, password: string) => {
-    const loggedInUser = authLogin(email, password);
+  const handleLogin = async (email: string, password: string) => {
+    const loggedInUser = await authLogin(email, password);
     if (loggedInUser) {
       setUser(loggedInUser);
       setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
@@ -183,8 +97,8 @@ export default function App() {
     }
   };
 
-  const handleSignupUser = (email: string, password: string, name: string) => {
-    const newUser = authSignupUser(email, password, name);
+  const handleSignupUser = async (email: string, password: string, name: string) => {
+    const newUser = await authSignupUser(email, password, name);
     if (newUser) {
       setUser(newUser);
       setSelectedRole('attendee');
@@ -195,8 +109,8 @@ export default function App() {
     }
   };
 
-  const handleSignupBusiness = (email: string, password: string, ownerName: string, businessName: string) => {
-    const newUser = authSignupBusiness(email, password, ownerName, businessName);
+  const handleSignupBusiness = async (email: string, password: string, ownerName: string, businessName: string) => {
+    const newUser = await authSignupBusiness(email, password, ownerName, businessName);
     if (newUser) {
       setUser(newUser);
       setSelectedRole('staff');
