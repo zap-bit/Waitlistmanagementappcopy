@@ -40,7 +40,7 @@ curl http://localhost:8000/health
 
 You should see `supabaseConfigured: true` once backend env vars are set.
 
-## 3) Use your existing `supaBaseTest.py`
+## 3) Use your existing `supabaseTest.py`
 
 Your Python script is good for validating connectivity + seed inserts quickly.
 
@@ -49,6 +49,43 @@ Recommended usage:
 1. keep using it to validate basic inserts into your Supabase tables.
 2. avoid storing plain passwords long-term in your `account` table.
 3. once backend endpoints are connected, move writes from script helpers into API route handlers so the app is the source of truth.
+
+### Exact "then what" sequence
+
+After you add `backend/supabaseTest.py`, do this in order:
+
+1. Install Python deps in your local environment:
+
+   ```bash
+   cd backend
+   python3 -m pip install supabase python-dotenv
+   ```
+
+2. Run your script once to seed/check DB connectivity:
+
+   ```bash
+   python3 supabaseTest.py
+   ```
+
+3. Start backend API and confirm health:
+
+   ```bash
+   npm install
+   npm run dev
+   curl http://localhost:8000/health
+   ```
+
+4. Start frontend and verify login/join flow through API:
+
+   ```bash
+   cd ../frontend
+   npm install
+   npm run dev
+   ```
+
+5. Port one backend route at a time from in-memory store to Supabase queries, then re-test UI after each route.
+
+`#SPEC GAP`: this repo currently uses in-memory seeded auth/session data by default; exact Supabase table names and migration SQL are not yet standardized in-repo.
 
 ## 4) Table mapping to current API contract
 
@@ -83,3 +120,11 @@ That can work, but keep naming/typing alignment in route serializers so API resp
 
 If you keep Option A, the browser should never receive the service-role key.
 Only backend reads `SUPABASE_SERVICE_ROLE_KEY`.
+
+Also avoid this login pattern in backend routes:
+
+- hashing with raw `sha256(password)` for authentication
+- querying `account` with `.eq('password', hashedPassword)`
+- returning ad-hoc `demo-token-*` strings
+
+Use backend `verifyPassword(...)` + `issueSession(...)` so login stays compatible with the existing secure session flow.

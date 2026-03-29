@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { db, recalcQueuePositions } from '../data/store.js';
+import { requireAuth, requireRole, requireStaffEventAccess } from '../middleware/auth.js';
 import { ApiError } from '../middleware/error.js';
 
 export const staffRouter = Router({ mergeParams: true });
+
+staffRouter.use(requireAuth, requireRole('staff'), requireStaffEventAccess);
 
 staffRouter.get('/dashboard', (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
@@ -28,13 +31,13 @@ staffRouter.post('/promote', (req, res, next) => {
   const event = db.events.get(eventId);
   if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
 
-  const requestedType = req.body?.type;
-  const nextEntry = requestedType ? event.waitlist.find((e) => e.type === requestedType) : event.waitlist[0];
+  const entryId = typeof req.body?.entryId === 'string' ? req.body.entryId : undefined;
+  const entry = entryId ? event.waitlist.find((item) => item.id === entryId) : event.waitlist[0];
 
-  if (!nextEntry) return next(new ApiError(409, 'NO_CAPACITY', 'No queued guests found'));
+  if (!entry) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
 
-  nextEntry.status = 'NOTIFIED';
-  return res.json({ promoted: [nextEntry] });
+  entry.status = 'NOTIFIED';
+  return res.json({ promoted: [entry] });
 });
 
 staffRouter.post('/seat', (req, res, next) => {
@@ -44,7 +47,7 @@ staffRouter.post('/seat', (req, res, next) => {
 
   const { entryId, tableId } = req.body ?? {};
   const entry = event.waitlist.find((e) => e.id === entryId);
-  const table = event.tables.find((t) => t.id === tableId);
+  const table = event.tables.find((t) => t.id === Number(tableId));
 
   if (!entry) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
   if (!table) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Table not found'));
@@ -59,5 +62,22 @@ staffRouter.post('/seat', (req, res, next) => {
   event.waitlist = event.waitlist.filter((e) => e.id !== entryId);
   recalcQueuePositions(eventId);
 
-  return res.json({ entryId, tableId, status: 'SEATED' });
+  return res.json({ entryId, tableId: table.id, status: 'SEATED' });
+});
+
+staffRouter.post('/clear-table', (req, res, next) => {
+  const { eventId } = req.params as { eventId: string };
+  const event = db.events.get(eventId);
+  if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
+
+  const tableId = Number(req.body?.tableId);
+  const table = event.tables.find((item) => item.id === tableId);
+  if (!table) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Table not found'));
+
+  table.occupied = false;
+  table.guestName = undefined;
+  table.partySize = undefined;
+  table.seatedAt = undefined;
+
+  return res.json({ ok: true, tableId });
 });

@@ -1,13 +1,17 @@
 import { useState, useEffect } from 'react';
 import { CircularProgress } from './CircularProgress';
+import { SimpleCapacityTracker } from './SimpleCapacityTracker';
 import { StatusBar } from './StatusBar';
 import { TableGrid, Table } from './TableGrid';
 import { CreateEventModal } from './CreateEventModal';
-import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2 } from 'lucide-react';
+import { QRCodeModal } from './QRCodeModal';
+import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2, User as UserIcon, QrCode, Archive, ArchiveRestore } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
-import { Event, getStoredEvents, addEvent, deleteEvent } from '../utils/events';
-import { getStoredUser } from '../utils/auth';
+import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent } from '../utils/events';
+import { appStorage } from '../utils/appStorage';
+import { getStoredUser, User } from '../utils/auth';
+import { Profile } from './Profile';
 
 interface Attraction {
   id: string;
@@ -26,11 +30,12 @@ interface StaffDashboardProps {
   setWaitlist: React.Dispatch<React.SetStateAction<WaitlistEntry[]>>;
   tables: Table[];
   setTables: React.Dispatch<React.SetStateAction<Table[]>>;
+  user: User;
 }
 
 const getStoredNumber = (key: string, defaultValue: number): number => {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(key);
+    const saved = appStorage.getItem(key);
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -44,7 +49,7 @@ const getStoredNumber = (key: string, defaultValue: number): number => {
 
 const getStoredBoolean = (key: string, defaultValue: boolean): boolean => {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(key);
+    const saved = appStorage.getItem(key);
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -61,44 +66,129 @@ const calculateWaitTime = (queueSize: number, throughput: number): number => {
   return Math.round((queueSize / throughput) * 60);
 };
 
-export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables }: StaffDashboardProps) {
+// Helper functions to save/load tables per event
+const saveEventTables = (eventId: string, tables: Table[]) => {
+  if (typeof window !== 'undefined') {
+    appStorage.setItem(`tables_${eventId}`, JSON.stringify(tables));
+  }
+};
+
+const loadEventTables = (eventId: string): Table[] | null => {
+  if (typeof window !== 'undefined') {
+    const saved = appStorage.getItem(`tables_${eventId}`);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error(`Error loading tables for event ${eventId}:`, e);
+      }
+    }
+  }
+  return null;
+};
+
+export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables, user }: StaffDashboardProps) {
   const [currentCapacity, setCurrentCapacity] = useState(() => getStoredNumber('currentCapacity', 45));
   const [maxCapacity, setMaxCapacity] = useState(() => getStoredNumber('maxCapacity', 100));
   const [isOnline, setIsOnline] = useState(() => getStoredBoolean('isOnline', true));
   const [isSyncing, setIsSyncing] = useState(false);
-  const [currentPage, setCurrentPage] = useState<'home' | 'waitlist' | 'capacity'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'waitlist' | 'capacity' | 'simple-capacity' | 'archived'>('home');
   const [listView, setListView] = useState<'waitlist' | 'reservation'>('waitlist');
   const [waitlistSubPage, setWaitlistSubPage] = useState<'view' | 'settings'>('view');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [totalTables, setTotalTables] = useState(() => getStoredNumber('totalTables', 12));
   const [showCreateEventModal, setShowCreateEventModal] = useState(false);
-  const [events, setEvents] = useState<Event[]>(getStoredEvents);
+  const [events, setEvents] = useState<Event[]>(() => getActiveEvents().filter(e => e.businessId === user.businessId));
+  const [archivedEvents, setArchivedEvents] = useState<Event[]>(() => getArchivedEvents().filter(e => e.businessId === user.businessId));
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [attractions, setAttractions] = useState<Attraction[]>([]);
   const [showAttractionModal, setShowAttractionModal] = useState(false);
   const [editingAttraction, setEditingAttraction] = useState<Attraction | null>(null);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+  const [showQRCodeModal, setShowQRCodeModal] = useState(false);
+  const [selectedQueueId, setSelectedQueueId] = useState<string | undefined>();
+  const [selectedQueueName, setSelectedQueueName] = useState<string | undefined>();
+
+  // Filter events by businessId on mount and refresh
+  useEffect(() => {
+    const activeEvents = getActiveEvents().filter(e => e.businessId === user.businessId);
+    const archived = getArchivedEvents().filter(e => e.businessId === user.businessId);
+    setEvents(activeEvents);
+    setArchivedEvents(archived);
+  }, [user.businessId]);
+
+  // Refresh events when navigating to home or archived pages
+  useEffect(() => {
+    if (currentPage === 'home' || currentPage === 'archived') {
+      const activeEvents = getActiveEvents().filter(e => e.businessId === user.businessId);
+      const archived = getArchivedEvents().filter(e => e.businessId === user.businessId);
+      setEvents(activeEvents);
+      setArchivedEvents(archived);
+    }
+  }, [currentPage, user.businessId]);
+
+  // Auto-create default line for single-queue events
+  useEffect(() => {
+    if (selectedEvent && selectedEvent.type === 'capacity-based') {
+      const capacityEvent = selectedEvent as CapacityBasedEvent;
+      if (capacityEvent.queueMode === 'single' && attractions.length === 0) {
+        // Create a default line with the same name as the event
+        const defaultLine: Attraction = {
+          id: 'default-single-queue',
+          name: selectedEvent.name,
+          waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+          queueSize: capacityEvent.currentCount || 0,
+          queueCapacity: capacityEvent.capacity || 100,
+          throughput: 240, // default throughput
+          status: 'open',
+          autoCalculateWait: true,
+        };
+        setAttractions([defaultLine]);
+      } else if (capacityEvent.queueMode === 'multiple') {
+        // Load queues from the event if they exist
+        if (capacityEvent.queues && capacityEvent.queues.length > 0) {
+          const attractionsFromQueues: Attraction[] = capacityEvent.queues.map(queue => ({
+            id: queue.id,
+            name: queue.name,
+            waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+            queueSize: queue.currentCount || 0,
+            queueCapacity: queue.capacity,
+            throughput: 240, // default throughput
+            status: 'open',
+            autoCalculateWait: true,
+          }));
+          setAttractions(attractionsFromQueues);
+        } else if (attractions.length === 0) {
+          // No queues defined yet, start with empty
+          setAttractions([]);
+        }
+      }
+    }
+  }, [selectedEvent]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('currentCapacity', JSON.stringify(currentCapacity));
+      appStorage.setItem('currentCapacity', JSON.stringify(currentCapacity));
     }
   }, [currentCapacity]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('totalTables', JSON.stringify(totalTables));
+      appStorage.setItem('totalTables', JSON.stringify(totalTables));
     }
   }, [totalTables]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('maxCapacity', JSON.stringify(maxCapacity));
+      appStorage.setItem('maxCapacity', JSON.stringify(maxCapacity));
     }
   }, [maxCapacity]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('isOnline', JSON.stringify(isOnline));
+      appStorage.setItem('isOnline', JSON.stringify(isOnline));
     }
   }, [isOnline]);
 
@@ -130,20 +220,30 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     );
 
     if (availableTable) {
-      setTables(
-        tables.map((t) =>
-          t.id === availableTable.id
-            ? {
-                ...t,
-                occupied: true,
-                guestName: entry.name,
-                partySize: entry.partySize,
-                seatedAt: new Date(),
-              }
-            : t
-        )
+      const updatedTables = tables.map((t) =>
+        t.id === availableTable.id
+          ? {
+              ...t,
+              occupied: true,
+              guestName: entry.name,
+              partySize: entry.partySize,
+              seatedAt: new Date(),
+            }
+          : t
       );
+      
+      setTables(updatedTables);
       setWaitlist(waitlist.filter((e) => e.id !== id));
+      
+      // Update event's currentFilledTables count
+      if (selectedEvent && selectedEvent.type === 'table-based') {
+        const filledCount = updatedTables.filter(t => t.occupied).length;
+        updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
+        setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
+        setEvents(getStoredEvents());
+        saveEventTables(selectedEvent.id, updatedTables);
+      }
+      
       toast.success(`${entry.name} seated at ${availableTable.name}`, {
         description: `Party of ${entry.partySize}`,
       });
@@ -187,6 +287,15 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     setTables(newTables);
     setWaitlist(newWaitlist);
     
+    // Update event's currentFilledTables count
+    if (selectedEvent && selectedEvent.type === 'table-based') {
+      const filledCount = newTables.filter(t => t.occupied).length;
+      updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
+      setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
+      setEvents(getStoredEvents());
+      saveEventTables(selectedEvent.id, newTables);
+    }
+    
     if (seatedCount > 0) {
       toast.success(`Seated ${seatedCount} ${seatedCount === 1 ? 'guest' : 'groups'}`);
       simulateSync();
@@ -208,61 +317,100 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     const table = tables.find((t) => t.id === tableId);
     if (!table) return;
 
-    setTables(
-      tables.map((t) =>
-        t.id === tableId
-          ? { ...t, occupied: false, guestName: undefined, partySize: undefined, seatedAt: undefined }
-          : t
-      )
+    const updatedTables = tables.map((t) =>
+      t.id === tableId
+        ? { ...t, occupied: false, guestName: undefined, partySize: undefined, seatedAt: undefined }
+        : t
     );
+    
+    setTables(updatedTables);
+    
+    // Update event's currentFilledTables count
+    if (selectedEvent && selectedEvent.type === 'table-based') {
+      const filledCount = updatedTables.filter(t => t.occupied).length;
+      updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
+      setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
+      setEvents(getStoredEvents());
+      saveEventTables(selectedEvent.id, updatedTables);
+    }
+    
     toast.success(`${table.name} cleared`);
     simulateSync();
   };
 
   const handleClearAllTables = () => {
     if (confirm('Clear all tables? This will remove all guests.')) {
-      setTables(
-        tables.map((t) => ({
-          ...t,
-          occupied: false,
-          guestName: undefined,
-          partySize: undefined,
-          seatedAt: undefined,
-        }))
-      );
+      const updatedTables = tables.map((t) => ({
+        ...t,
+        occupied: false,
+        guestName: undefined,
+        partySize: undefined,
+        seatedAt: undefined,
+      }));
+      
+      setTables(updatedTables);
+      
+      // Update event's currentFilledTables count to 0
+      if (selectedEvent && selectedEvent.type === 'table-based') {
+        updateEvent(selectedEvent.id, { currentFilledTables: 0 });
+        setSelectedEvent({ ...selectedEvent, currentFilledTables: 0 } as any);
+        setEvents(getStoredEvents());
+        saveEventTables(selectedEvent.id, updatedTables);
+      }
+      
       toast.success('All tables cleared');
       simulateSync();
     }
   };
 
   const handleRenameTable = (tableId: number, newName: string) => {
-    setTables(
-      tables.map((t) =>
-        t.id === tableId ? { ...t, name: newName } : t
-      )
+    const updatedTables = tables.map((t) =>
+      t.id === tableId ? { ...t, name: newName } : t
     );
+    setTables(updatedTables);
+    
+    // Save tables to localStorage
+    if (selectedEvent && selectedEvent.type === 'table-based') {
+      saveEventTables(selectedEvent.id, updatedTables);
+    }
+    
     toast.success('Table renamed');
     simulateSync();
   };
 
   const handleUpdateCapacity = (tableId: number, newCapacity: number) => {
-    setTables(
-      tables.map((t) =>
-        t.id === tableId ? { ...t, capacity: newCapacity } : t
-      )
+    const updatedTables = tables.map((t) =>
+      t.id === tableId ? { ...t, capacity: newCapacity } : t
     );
+    setTables(updatedTables);
+    
+    // Save tables to localStorage
+    if (selectedEvent && selectedEvent.type === 'table-based') {
+      saveEventTables(selectedEvent.id, updatedTables);
+    }
+    
     toast.success('Table capacity updated');
     simulateSync();
   };
 
   const handleManualOccupy = (tableId: number, guestName: string, partySize: number) => {
-    setTables(
-      tables.map((t) =>
-        t.id === tableId
-          ? { ...t, occupied: true, guestName, partySize, seatedAt: new Date() }
-          : t
-      )
+    const updatedTables = tables.map((t) =>
+      t.id === tableId
+        ? { ...t, occupied: true, guestName, partySize, seatedAt: new Date() }
+        : t
     );
+    
+    setTables(updatedTables);
+    
+    // Update event's currentFilledTables count
+    if (selectedEvent && selectedEvent.type === 'table-based') {
+      const filledCount = updatedTables.filter(t => t.occupied).length;
+      updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
+      setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
+      setEvents(getStoredEvents());
+      saveEventTables(selectedEvent.id, updatedTables);
+    }
+    
     toast.success(`${guestName} seated manually`);
     simulateSync();
   };
@@ -293,6 +441,16 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
 
     setTotalTables(newCount);
     setTables(newTables);
+    
+    // Save tables to localStorage
+    if (selectedEvent && selectedEvent.type === 'table-based') {
+      saveEventTables(selectedEvent.id, newTables);
+      // Also update the event's numberOfTables
+      updateEvent(selectedEvent.id, { numberOfTables: newCount });
+      setSelectedEvent({ ...selectedEvent, numberOfTables: newCount } as any);
+      setEvents(getStoredEvents());
+    }
+    
     toast.success(`Table count updated to ${newCount}`);
     simulateSync();
   };
@@ -322,17 +480,29 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
           <p className="text-sm text-gray-400">
             {currentPage === 'home'
               ? 'Your Events'
-              : currentPage === 'waitlist' 
-                ? (waitlistSubPage === 'settings' ? 'Table Settings' : selectedEvent?.name || 'Waitlist Management')
-                : selectedEvent?.name || 'Capacity Management'}
+              : currentPage === 'archived'
+                ? 'Archived Events'
+                : currentPage === 'waitlist' 
+                  ? (waitlistSubPage === 'settings' ? 'Table Settings' : selectedEvent?.name || 'Waitlist Management')
+                  : selectedEvent?.name || 'Capacity Management'}
           </p>
         </div>
-        <button
-          onClick={onLogout}
-          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-        >
-          <LogOut className="w-6 h-6" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowProfile(true)}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            title="Profile"
+          >
+            <UserIcon className="w-6 h-6" />
+          </button>
+          <button
+            onClick={onLogout}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            title="Logout"
+          >
+            <LogOut className="w-6 h-6" />
+          </button>
+        </div>
       </div>
 
       {menuOpen && (
@@ -347,7 +517,46 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
             }`}
           >
             <div className="font-semibold">Dashboard</div>
-            <div className="text-sm text-gray-600">View all events</div>
+            
+          </button>
+          <button
+            onClick={() => {
+              setCurrentPage('archived');
+              setMenuOpen(false);
+            }}
+            className={`w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200 ${
+              currentPage === 'archived' ? 'bg-blue-50 border-l-4 border-blue-600' : ''
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Archive className="w-5 h-5" />
+              <span className="font-semibold">Archived Events</span>
+              {archivedEvents.length > 0 && (
+                <span className="ml-auto bg-gray-200 text-gray-700 text-xs px-2 py-1 rounded-full">
+                  {archivedEvents.length}
+                </span>
+              )}
+            </div>
+          </button>
+          <button
+            onClick={() => {
+              setShowProfile(true);
+              setMenuOpen(false);
+            }}
+            className="w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200"
+          >
+            <div className="font-semibold">Profile</div>
+            
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              onLogout();
+            }}
+            className="w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200 text-red-600"
+          >
+            <div className="font-semibold">Logout</div>
+            
           </button>
         </div>
       )}
@@ -392,60 +601,296 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                     event.status === 'paused' ? 'bg-amber-100 text-amber-700' :
                     'bg-gray-100 text-gray-700';
                   
-                  const typeColor = event.type === 'capacity-based' ? 'blue' : 'purple';
+                  const typeColor = 
+                    event.type === 'capacity-based' ? 'blue' :
+                    event.type === 'simple-capacity' ? 'green' : 'purple';
                   const TypeIcon = event.type === 'capacity-based' ? Users : Users;
                   
                   const currentCount = event.type === 'capacity-based' 
-                    ? event.currentCount 
+                    ? (() => {
+                        const capacityEvent = event as CapacityBasedEvent;
+                        if (capacityEvent.queueMode === 'multiple') {
+                          // For multiple queues, count entries that match any queue in this event
+                          const queueIds = capacityEvent.queues?.map(q => q.id) || [];
+                          return waitlist.filter(e => e.queueId && queueIds.includes(e.queueId)).length;
+                        } else {
+                          // For single queue, count entries with matching eventId
+                          return waitlist.filter(e => e.eventId === event.id).length;
+                        }
+                      })()
+                    : event.type === 'simple-capacity'
+                    ? (event as SimpleCapacityEvent).currentCount
                     : event.currentFilledTables;
                   
                   const maxCount = event.type === 'capacity-based'
-                    ? event.capacity
-                    : event.numberOfTables;
+                    ? (event as CapacityBasedEvent).queueMode === 'multiple'
+                      ? ((event as CapacityBasedEvent).queues?.reduce((sum, q) => sum + q.capacity, 0) || 0)
+                      : (event.capacity || 0)
+                    : event.type === 'simple-capacity'
+                    ? (event as SimpleCapacityEvent).capacity
+                    : (event.numberOfTables || 0);
 
                   return (
-                    <button
+                    <div
                       key={event.id}
-                      onClick={() => {
-                        setSelectedEvent(event);
-                        if (event.type === 'capacity-based') {
-                          setCurrentPage('capacity');
-                        } else {
-                          setCurrentPage('waitlist');
-                          setWaitlistSubPage('view');
-                        }
-                      }}
-                      className={`bg-white rounded-xl shadow-md hover:shadow-xl transition-all p-6 text-left border-2 border-transparent hover:border-${typeColor}-500 group`}
+                      className={`bg-white rounded-xl shadow-md hover:shadow-xl transition-all p-6 text-left border-2 border-transparent hover:border-${typeColor}-500 group relative`}
                     >
-                      <div className="flex items-start justify-between mb-4">
-                        <div className={`w-12 h-12 bg-${typeColor}-100 rounded-lg flex items-center justify-center group-hover:bg-${typeColor}-500 transition-colors`}>
-                          <TypeIcon className={`w-6 h-6 text-${typeColor}-600 group-hover:text-white`} />
-                        </div>
-                        <span className={`text-xs px-3 py-1 rounded-full font-medium ${statusColor}`}>
-                          {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
-                        </span>
+                      {/* Action Buttons - Top Right */}
+                      <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedEvent(event);
+                            setShowQRCodeModal(true);
+                          }}
+                          className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg"
+                          title="View QR Code"
+                        >
+                          <QrCode className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEventToDelete(event);
+                            setShowDeleteConfirmation(true);
+                          }}
+                          className="p-2 bg-orange-50 hover:bg-orange-100 text-orange-600 rounded-lg"
+                          title="Archive event"
+                        >
+                          <Archive className="w-4 h-4" />
+                        </button>
                       </div>
-                      
-                      <h3 className="text-xl font-bold text-gray-800 mb-2">{event.name}</h3>
-                      
-                      <div className="flex items-center gap-2 mb-4">
-                        <span className="text-sm text-gray-600">
-                          {event.type === 'capacity-based' ? 'Capacity-Based' : 'Table-Based'}
+
+                      {/* Event Card Content - Make it clickable */}
+                      <div
+                        onClick={() => {
+                          setSelectedEvent(event);
+                          if (event.type === 'capacity-based') {
+                            setCurrentPage('capacity');
+                          } else if (event.type === 'simple-capacity') {
+                            setCurrentPage('simple-capacity');
+                          } else {
+                            setCurrentPage('waitlist');
+                            setWaitlistSubPage('view');
+                            
+                            // Load or initialize tables when selecting a table-based event
+                            const tableEvent = event as any; // TableBasedEvent
+                            const newTableCount = tableEvent.numberOfTables || 12;
+                            
+                            // Try to load existing tables for this event
+                            const existingTables = loadEventTables(event.id);
+                            
+                            if (existingTables && existingTables.length === newTableCount) {
+                              // Use existing tables if they match the event configuration
+                              setTables(existingTables);
+                              setTotalTables(newTableCount);
+                            } else {
+                              // Generate new tables based on event configuration
+                              const cols = 4;
+                              const newTables: Table[] = [];
+                              for (let i = 0; i < newTableCount; i++) {
+                                const row = Math.floor(i / cols);
+                                const col = i % cols;
+                                newTables.push({
+                                  id: i + 1,
+                                  row,
+                                  col,
+                                  name: `Table ${i + 1}`,
+                                  capacity: tableEvent.averageTableSize || 4,
+                                  occupied: false,
+                                });
+                              }
+                              
+                              setTotalTables(newTableCount);
+                              setTables(newTables);
+                              saveEventTables(event.id, newTables);
+                            }
+                          }
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div className={`w-12 h-12 bg-${typeColor}-100 rounded-lg flex items-center justify-center group-hover:bg-${typeColor}-500 transition-colors`}>
+                            <TypeIcon className={`w-6 h-6 text-${typeColor}-600 group-hover:text-white`} />
+                          </div>
+                          <span className={`text-xs px-3 py-1 rounded-full font-medium ${statusColor}`}>
+                            {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
+                          </span>
+                        </div>
+                        
+                        <h3 className="text-xl font-bold text-gray-800 mb-2">{event.name}</h3>
+                        
+                        <div className="flex items-center gap-2 mb-4">
+                          <span className="text-sm text-gray-600">
+                            {event.type === 'capacity-based' ? 'Capacity-Based' : 
+                             event.type === 'simple-capacity' ? 'Attendance Tracker' : 'Table-Based'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1">
+                            {event.type === 'capacity-based' ? (
+                              <div className="text-lg font-semibold text-gray-800">
+                                {(event as CapacityBasedEvent).queueMode === 'single' ? 'Single Queue' : 'Multiple Queues'}
+                              </div>
+                            ) : (
+                              <>
+                                <div className="text-2xl font-bold text-gray-800">
+                                  {currentCount} <span className="text-sm font-normal text-gray-500">/ {maxCount}</span>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {event.type === 'table-based' ? 'Tables Filled' : 'Current Count'}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          <div className="text-2xl font-bold text-gray-300 group-hover:text-blue-500 transition-colors">→</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : currentPage === 'archived' ? (
+        <div className="flex-1 overflow-auto bg-gray-50">
+          <div className="p-6 max-w-4xl mx-auto">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-800">Archived Events</h2>
+                <p className="text-gray-600">View and restore your archived events</p>
+              </div>
+              <button
+                onClick={() => setCurrentPage('home')}
+                className="flex items-center gap-2 px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-xl font-semibold shadow-lg active:scale-95 transition-transform"
+              >
+                ← Back to Events
+              </button>
+            </div>
+            
+            {archivedEvents.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Archive className="w-10 h-10 text-gray-400" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-800 mb-2">No archived events</h3>
+                <p className="text-gray-600">Events you archive will appear here</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {archivedEvents.map((event) => {
+                  const typeColor = 
+                    event.type === 'capacity-based' ? 'blue' :
+                    event.type === 'simple-capacity' ? 'green' : 'purple';
+                  const TypeIcon = Users;
+                  
+                  const currentCount = event.type === 'capacity-based' 
+                    ? (() => {
+                        const capacityEvent = event as CapacityBasedEvent;
+                        if (capacityEvent.queueMode === 'multiple') {
+                          // For multiple queues, count entries that match any queue in this event
+                          const queueIds = capacityEvent.queues?.map(q => q.id) || [];
+                          return waitlist.filter(e => e.queueId && queueIds.includes(e.queueId)).length;
+                        } else {
+                          // For single queue, count entries with matching eventId
+                          return waitlist.filter(e => e.eventId === event.id).length;
+                        }
+                      })()
+                    : event.type === 'simple-capacity'
+                    ? (event as SimpleCapacityEvent).currentCount
+                    : event.currentFilledTables;
+                  
+                  const maxCount = event.type === 'capacity-based'
+                    ? (event as CapacityBasedEvent).queueMode === 'multiple'
+                      ? ((event as CapacityBasedEvent).queues?.reduce((sum, q) => sum + q.capacity, 0) || 0)
+                      : (event.capacity || 0)
+                    : event.type === 'simple-capacity'
+                    ? (event as SimpleCapacityEvent).capacity
+                    : (event.numberOfTables || 0);
+
+                  return (
+                    <div
+                      key={event.id}
+                      className="bg-white rounded-xl shadow-md p-6 text-left border-2 border-gray-300 relative opacity-75 flex flex-col"
+                    >
+                      {/* Archived Badge */}
+                      <div className="absolute top-4 right-4 z-10">
+                        <span className="text-xs px-3 py-1 rounded-full font-medium bg-orange-100 text-orange-700">
+                          Archived
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1">
-                          <div className="text-2xl font-bold text-gray-800">
-                            {currentCount} <span className="text-sm font-normal text-gray-500">/ {maxCount}</span>
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {event.type === 'capacity-based' ? 'In Queue' : 'Tables Filled'}
-                          </div>
+                      {/* Horizontal layout for content */}
+                      <div className="flex items-center gap-6 mb-4">
+                        <div className={`w-12 h-12 bg-${typeColor}-100 rounded-lg flex items-center justify-center flex-shrink-0`}>
+                          <TypeIcon className={`w-6 h-6 text-${typeColor}-600`} />
                         </div>
-                        <div className="text-2xl font-bold text-gray-300 group-hover:text-blue-500 transition-colors">→</div>
+                        
+                        <div className="flex-1">
+                          <h3 className="text-xl font-bold text-gray-800 mb-1">{event.name}</h3>
+                          <span className="text-sm text-gray-600">
+                            {event.type === 'capacity-based' ? 'Capacity-Based' : 
+                             event.type === 'simple-capacity' ? 'Attendance Tracker' : 'Table-Based'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-6">
+                          <div className="text-right">
+                            {event.type === 'capacity-based' ? (
+                              <div className="text-lg font-semibold text-gray-800">
+                                {(event as CapacityBasedEvent).queueMode === 'single' ? 'Single Queue' : 'Multiple Queues'}
+                              </div>
+                            ) : (
+                              <>
+                                <div className="text-2xl font-bold text-gray-800">
+                                  {currentCount} <span className="text-sm font-normal text-gray-500">/ {maxCount}</span>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {event.type === 'table-based' ? 'Tables Filled' : 'Current Count'}
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                          {event.archivedAt && (
+                            <p className="text-xs text-gray-500">
+                              Archived {new Date(event.archivedAt).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </button>
+
+                      {/* Buttons at bottom */}
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => {
+                            restoreEvent(event.id);
+                            toast.success(`Event "${event.name}" restored successfully`);
+                            setEvents(getActiveEvents().filter(e => e.businessId === user.businessId));
+                            setArchivedEvents(getArchivedEvents().filter(e => e.businessId === user.businessId));
+                          }}
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+                        >
+                          <ArchiveRestore className="w-4 h-4" />
+                          Restore
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Permanently delete "${event.name}"? This cannot be undone.`)) {
+                              deleteEvent(event.id);
+                              toast.success(`Event "${event.name}" permanently deleted`);
+                              setArchivedEvents(getArchivedEvents().filter(e => e.businessId === user.businessId));
+                            }
+                          }}
+                          className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -457,22 +902,26 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
           <div className="p-4 space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-bold">Queue Lines</h2>
-              <button
-                onClick={() => {
-                  setEditingAttraction(null);
-                  setShowAttractionModal(true);
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 active:scale-95 transition-transform"
-              >
-                <Plus className="w-4 h-4" />
-                Add Line
-              </button>
+              {selectedEvent && selectedEvent.type === 'capacity-based' && (selectedEvent as CapacityBasedEvent).queueMode === 'multiple' && (
+                <button
+                  onClick={() => {
+                    setEditingAttraction(null);
+                    setShowAttractionModal(true);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 active:scale-95 transition-transform"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Line
+                </button>
+              )}
             </div>
 
             <div className="grid gap-4">
               {attractions.map((attraction) => {
-                // Get actual queue size from waitlist for this event
-                const actualQueueSize = selectedEvent ? waitlist.filter(e => e.eventId === selectedEvent.id).length : attraction.queueSize;
+                // Get actual queue size - use manual queueSize when in manual mode, otherwise use live waitlist count
+                const actualQueueSize = !attraction.autoCalculateWait 
+                  ? attraction.queueSize 
+                  : (selectedEvent ? waitlist.filter(e => e.eventId === selectedEvent.id).length : attraction.queueSize);
                 const queuePercentage = (actualQueueSize / attraction.queueCapacity) * 100;
                 const getQueueColor = () => {
                   if (queuePercentage < 50) return 'bg-green-500';
@@ -480,10 +929,12 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                   return 'bg-red-500';
                 };
 
-                // Auto-update wait time based on actual queue size
+                // In auto mode, calculate wait time. In manual mode, use stored waitTime
                 const displayWaitTime = attraction.autoCalculateWait 
                   ? calculateWaitTime(actualQueueSize, attraction.throughput)
                   : attraction.waitTime;
+
+                const isSingleQueueEvent = selectedEvent && selectedEvent.type === 'capacity-based' && (selectedEvent as CapacityBasedEvent).queueMode === 'single';
 
                 return (
                   <div key={attraction.id} className="bg-white rounded-lg shadow-md p-4 border-2 border-gray-200">
@@ -499,27 +950,45 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            setEditingAttraction(attraction);
-                            setShowAttractionModal(true);
-                          }}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4 text-gray-600" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm(`Delete ${attraction.name}?`)) {
-                              setAttractions(attractions.filter(a => a.id !== attraction.id));
-                              toast.success(`${attraction.name} deleted`);
-                              simulateSync();
-                            }
-                          }}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
+                        {/* QR Code button for multiple-queue events */}
+                        {!isSingleQueueEvent && (
+                          <button
+                            onClick={() => {
+                              setSelectedQueueId(attraction.id);
+                              setSelectedQueueName(attraction.name);
+                              setShowQRCodeModal(true);
+                            }}
+                            className="p-2 bg-purple-50 hover:bg-purple-100 text-purple-600 rounded-lg transition-colors"
+                            title="View Queue QR Code"
+                          >
+                            <QrCode className="w-4 h-4" />
+                          </button>
+                        )}
+                        {!isSingleQueueEvent && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setEditingAttraction(attraction);
+                                setShowAttractionModal(true);
+                              }}
+                              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              <Edit2 className="w-4 h-4 text-gray-600" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Delete ${attraction.name}?`)) {
+                                  setAttractions(attractions.filter(a => a.id !== attraction.id));
+                                  toast.success(`${attraction.name} deleted`);
+                                  simulateSync();
+                                }
+                              }}
+                              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-600" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -527,48 +996,99 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                       <div className="bg-gray-50 rounded-lg p-3">
                         <div className="flex items-center gap-1 text-xs text-gray-600 mb-2">
                           <Clock className="w-3 h-3" />
-                          Wait Time {attraction.autoCalculateWait && <span className="text-green-600">(Auto)</span>}
+                          Wait Time
                         </div>
-                        <div className="flex items-center justify-between">
-                          <button
-                            onClick={() => {
-                              setAttractions(attractions.map(a =>
-                                a.id === attraction.id
-                                  ? { ...a, waitTime: Math.max(0, a.waitTime - 5), autoCalculateWait: false }
-                                  : a
-                              ));
-                              simulateSync();
-                            }}
-                            className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center active:scale-95 transition-transform"
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-                          <span className="text-2xl font-bold">{displayWaitTime}m</span>
-                          <button
-                            onClick={() => {
-                              setAttractions(attractions.map(a =>
-                                a.id === attraction.id
-                                  ? { ...a, waitTime: a.waitTime + 5, autoCalculateWait: false }
-                                  : a
-                              ));
-                              simulateSync();
-                            }}
-                            className="w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center active:scale-95 transition-transform"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
+                        {attraction.autoCalculateWait ? (
+                          <div className="text-center py-1">
+                            <span className="text-2xl font-bold">{displayWaitTime}m</span>
+                            <p className="text-xs text-gray-500 mt-1">Auto-calculated</p>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <button
+                              onClick={() => {
+                                setAttractions(attractions.map(a =>
+                                  a.id === attraction.id
+                                    ? { ...a, waitTime: Math.max(0, a.waitTime - 5) }
+                                    : a
+                                ));
+                                simulateSync();
+                              }}
+                              className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center active:scale-95 transition-transform"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <span className="text-2xl font-bold">{displayWaitTime}m</span>
+                            <button
+                              onClick={() => {
+                                setAttractions(attractions.map(a =>
+                                  a.id === attraction.id
+                                    ? { ...a, waitTime: a.waitTime + 5 }
+                                    : a
+                                ));
+                                simulateSync();
+                              }}
+                              className="w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center active:scale-95 transition-transform"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       <div className="bg-gray-50 rounded-lg p-3">
                         <div className="flex items-center gap-1 text-xs text-gray-600 mb-2">
                           <Users className="w-3 h-3" />
-                          Queue Size (Live)
+                          Queue Size
                         </div>
-                        <div className="text-center">
-                          <span className="text-xl font-bold">{actualQueueSize}/{attraction.queueCapacity}</span>
-                          <p className="text-xs text-gray-500 mt-1">Updates as guests join</p>
-                        </div>
+                        {!attraction.autoCalculateWait ? (
+                          <div className="flex items-center justify-between">
+                            <button
+                              onClick={() => {
+                                setAttractions(attractions.map(a => {
+                                  if (a.id === attraction.id) {
+                                    const newQueueSize = Math.max(0, a.queueSize - 1);
+                                    return { 
+                                      ...a, 
+                                      queueSize: newQueueSize,
+                                      waitTime: calculateWaitTime(newQueueSize, a.throughput)
+                                    };
+                                  }
+                                  return a;
+                                }));
+                                simulateSync();
+                              }}
+                              className="w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center active:scale-95 transition-transform"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <span className="text-xl font-bold">{actualQueueSize}/{attraction.queueCapacity}</span>
+                            <button
+                              onClick={() => {
+                                setAttractions(attractions.map(a => {
+                                  if (a.id === attraction.id) {
+                                    const newQueueSize = Math.min(a.queueCapacity, a.queueSize + 1);
+                                    return { 
+                                      ...a, 
+                                      queueSize: newQueueSize,
+                                      waitTime: calculateWaitTime(newQueueSize, a.throughput)
+                                    };
+                                  }
+                                  return a;
+                                }));
+                                simulateSync();
+                              }}
+                              className="w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center active:scale-95 transition-transform"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-center">
+                            <span className="text-xl font-bold">{actualQueueSize}/{attraction.queueCapacity}</span>
+                            <p className="text-xs text-gray-500 mt-1">Updates as guests join</p>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -591,9 +1111,9 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                         <button
                           onClick={() => {
                             setAttractions(attractions.map(a =>
-                              a.id === attraction.id ? { ...a, autoCalculateWait: false } : a
+                              a.id === attraction.id ? { ...a, autoCalculateWait: false, queueSize: actualQueueSize } : a
                             ));
-                            toast.info('Manual wait time mode enabled');
+                            toast.info('Manual mode enabled');
                           }}
                           className="text-blue-600 hover:text-blue-700 underline"
                         >
@@ -612,7 +1132,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                               }
                               return a;
                             }));
-                            toast.info('Auto-calculate wait time enabled');
+                            toast.info('Auto mode enabled');
                           }}
                           className="text-green-600 hover:text-green-700 underline"
                         >
@@ -778,6 +1298,74 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
             </div>
           )}
         </div>
+      ) : currentPage === 'simple-capacity' && selectedEvent && selectedEvent.type === 'simple-capacity' ? (
+        <div className="flex-1 overflow-auto flex items-center justify-center p-6">
+          <SimpleCapacityTracker
+            event={selectedEvent as SimpleCapacityEvent}
+            onIncrement={() => {
+              const simpleEvent = selectedEvent as SimpleCapacityEvent;
+              if (simpleEvent.currentCount < simpleEvent.capacity) {
+                const updated: SimpleCapacityEvent = {
+                  ...simpleEvent,
+                  currentCount: simpleEvent.currentCount + 1,
+                };
+                updateEvent(simpleEvent.id, { currentCount: updated.currentCount });
+                setSelectedEvent(updated);
+                setEvents(getStoredEvents());
+                toast.success('Count increased');
+                simulateSync();
+              } else {
+                toast.error('At full capacity');
+              }
+            }}
+            onDecrement={() => {
+              const simpleEvent = selectedEvent as SimpleCapacityEvent;
+              if (simpleEvent.currentCount > 0) {
+                const updated: SimpleCapacityEvent = {
+                  ...simpleEvent,
+                  currentCount: simpleEvent.currentCount - 1,
+                };
+                updateEvent(simpleEvent.id, { currentCount: updated.currentCount });
+                setSelectedEvent(updated);
+                setEvents(getStoredEvents());
+                toast.success('Count decreased');
+                simulateSync();
+              }
+            }}
+            onIncrementBy10={() => {
+              const simpleEvent = selectedEvent as SimpleCapacityEvent;
+              if (simpleEvent.currentCount + 10 <= simpleEvent.capacity) {
+                const updated: SimpleCapacityEvent = {
+                  ...simpleEvent,
+                  currentCount: simpleEvent.currentCount + 10,
+                };
+                updateEvent(simpleEvent.id, { currentCount: updated.currentCount });
+                setSelectedEvent(updated);
+                setEvents(getStoredEvents());
+                toast.success('Added 10 people');
+                simulateSync();
+              } else {
+                toast.error('Not enough capacity for 10 more people');
+              }
+            }}
+            onDecrementBy10={() => {
+              const simpleEvent = selectedEvent as SimpleCapacityEvent;
+              if (simpleEvent.currentCount >= 10) {
+                const updated: SimpleCapacityEvent = {
+                  ...simpleEvent,
+                  currentCount: simpleEvent.currentCount - 10,
+                };
+                updateEvent(simpleEvent.id, { currentCount: updated.currentCount });
+                setSelectedEvent(updated);
+                setEvents(getStoredEvents());
+                toast.success('Removed 10 people');
+                simulateSync();
+              } else {
+                toast.error('Cannot remove 10 people');
+              }
+            }}
+          />
+        </div>
       ) : waitlistSubPage === 'settings' ? (
         <div className="flex-1 overflow-auto">
           <div className="p-6 max-w-2xl mx-auto">
@@ -937,6 +1525,14 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                         <div className="mt-1 text-sm text-gray-600">
                           Party of {entry.partySize} • Est. wait: {formatWaitTime(entry.estimatedWait)}
                         </div>
+                        {entry.type === 'reservation' && entry.reservationTime && (
+                          <div className="mt-2 inline-flex items-center gap-2 bg-green-100 border border-green-300 rounded-lg px-3 py-1">
+                            <Clock className="w-4 h-4 text-green-700" />
+                            <span className="text-sm font-bold text-green-700">
+                              {entry.reservationTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        )}
                         {entry.specialRequests && (
                           <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-2">
                             <div className="text-xs font-semibold text-blue-900 mb-1">Special Request:</div>
@@ -977,8 +1573,126 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
           onClose={() => setShowCreateEventModal(false)}
           onCreateEvent={(event) => {
             addEvent(event);
-            setEvents(getStoredEvents());
+            setEvents(getActiveEvents().filter(e => e.businessId === user.businessId));
+            setArchivedEvents(getArchivedEvents().filter(e => e.businessId === user.businessId));
+            
+            // Initialize tables for table-based events
+            if (event.type === 'table-based') {
+              const tableEvent = event as any; // TableBasedEvent
+              const newTableCount = tableEvent.numberOfTables || 12;
+              
+              // Generate new tables based on event configuration
+              const cols = 4;
+              const newTables: Table[] = [];
+              for (let i = 0; i < newTableCount; i++) {
+                const row = Math.floor(i / cols);
+                const col = i % cols;
+                newTables.push({
+                  id: i + 1,
+                  row,
+                  col,
+                  name: `Table ${i + 1}`,
+                  capacity: tableEvent.averageTableSize || 4,
+                  occupied: false,
+                });
+              }
+              
+              setTotalTables(newTableCount);
+              setTables(newTables);
+              saveEventTables(event.id, newTables);
+              toast.success(`Initialized ${newTableCount} tables for ${event.name}`);
+            }
           }}
+        />
+      )}
+
+      {/* Profile Modal */}
+      {showProfile && (
+        <Profile
+          user={user}
+          onClose={() => setShowProfile(false)}
+          onLogout={onLogout}
+        />
+      )}
+
+      {/* Archive Confirmation Modal */}
+      {showDeleteConfirmation && eventToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            {/* Archive Icon */}
+            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Archive className="w-8 h-8 text-orange-600" />
+            </div>
+            
+            <h3 className="text-2xl font-bold text-center mb-2">
+              Archive Event?
+            </h3>
+            
+            <p className="text-center text-gray-600 mb-4">
+              You're about to archive the <span className="font-semibold text-gray-900">"{eventToDelete.name}"</span> event
+            </p>
+            
+            {/* Info Card */}
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-white text-sm font-bold">i</span>
+                </div>
+                <div>
+                  <h4 className="font-semibold text-blue-900 mb-1">Event will be archived</h4>
+                  <ul className="text-sm text-blue-800 space-y-1">
+                    <li>• Event will be moved to archived events</li>
+                    <li>• Data will be preserved</li>
+                    <li>• You can restore it anytime</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirmation(false);
+                  setEventToDelete(null);
+                }}
+                className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 font-semibold active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (eventToDelete) {
+                    archiveEvent(eventToDelete.id);
+                    toast.success(`Event "${eventToDelete.name}" archived successfully`);
+                    // Refresh events
+                    setEvents(getActiveEvents().filter(e => e.businessId === user.businessId));
+                    setArchivedEvents(getArchivedEvents().filter(e => e.businessId === user.businessId));
+                  }
+                  setShowDeleteConfirmation(false);
+                  setEventToDelete(null);
+                }}
+                className="flex-1 px-4 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-semibold active:scale-95 transition-transform shadow-lg"
+              >
+                Archive Event
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Modal */}
+      {showQRCodeModal && selectedEvent && (
+        <QRCodeModal
+          event={selectedEvent}
+          onClose={() => {
+            setShowQRCodeModal(false);
+            setSelectedQueueId(undefined);
+            setSelectedQueueName(undefined);
+          }}
+          queueId={selectedQueueId}
+          queueName={selectedQueueName}
         />
       )}
     </div>

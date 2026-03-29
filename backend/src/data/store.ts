@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
-import type { BusinessModel, EventModel, UserModel, WaitlistEntry } from '../types/contracts.js';
+import type { AccessSession, BusinessModel, EventModel, RefreshSession, UserModel, WaitlistEntry } from '../types/contracts.js';
+import { hashPassword } from '../lib/security.js';
 
 const makeTables = (totalTables = 12) => {
   const cols = 4;
@@ -15,6 +16,27 @@ const makeTables = (totalTables = 12) => {
 
 const now = new Date();
 const demoBusinessId = 'biz-demo';
+
+const demoBusiness: BusinessModel = {
+  id: demoBusinessId,
+  name: 'Figma Demo Restaurant',
+  ownerId: 'staff-demo',
+};
+
+const demoStaffUser: UserModel = {
+  id: 'staff-demo',
+  email: 'admin@demo.com',
+  name: 'Demo Manager',
+  role: 'staff',
+  businessId: demoBusiness.id,
+};
+
+const demoAttendeeUser: UserModel = {
+  id: 'user-demo',
+  email: 'guest@demo.com',
+  name: 'Demo Guest',
+  role: 'user',
+};
 
 const demoEvent: EventModel = {
   id: 'demo-event',
@@ -40,6 +62,7 @@ const demoEvent: EventModel = {
       position: 1,
       estimatedWait: 20,
       joinedAt: new Date(now.getTime() - 15 * 60 * 1000).toISOString(),
+      createdByUserId: demoAttendeeUser.id,
     },
   ],
 };
@@ -48,27 +71,6 @@ demoEvent.tables[0].occupied = true;
 demoEvent.tables[0].guestName = 'Michael Chen';
 demoEvent.tables[0].partySize = 2;
 demoEvent.tables[0].seatedAt = new Date(now.getTime() - 12 * 60 * 1000).toISOString();
-
-const demoBusiness: BusinessModel = {
-  id: demoBusinessId,
-  name: 'Figma Demo Restaurant',
-  ownerId: 'staff-demo',
-};
-
-const demoStaffUser: UserModel = {
-  id: 'staff-demo',
-  email: 'admin@demo.com',
-  name: 'Demo Manager',
-  role: 'staff',
-  businessId: demoBusiness.id,
-};
-
-const demoAttendeeUser: UserModel = {
-  id: 'user-demo',
-  email: 'guest@demo.com',
-  name: 'Demo Guest',
-  role: 'user',
-};
 
 export const db = {
   events: new Map<string, EventModel>([[demoEvent.id, demoEvent]]),
@@ -80,13 +82,18 @@ export const db = {
     [demoStaffUser.email.toLowerCase(), demoStaffUser.id],
     [demoAttendeeUser.email.toLowerCase(), demoAttendeeUser.id],
   ]),
-  passwords: new Map<string, string>([
-    [demoStaffUser.id, 'password123'],
-    [demoAttendeeUser.id, 'password123'],
-  ]),
+  passwordHashes: new Map<string, string>(),
   businesses: new Map<string, BusinessModel>([[demoBusiness.id, demoBusiness]]),
-  tokens: new Map<string, string>(),
+  accessTokens: new Map<string, AccessSession>(),
+  refreshTokens: new Map<string, RefreshSession>(),
 };
+
+export async function seedStore() {
+  if (!db.passwordHashes.size) {
+    db.passwordHashes.set(demoStaffUser.id, await hashPassword('password123'));
+    db.passwordHashes.set(demoAttendeeUser.id, await hashPassword('password123'));
+  }
+}
 
 export function recalcQueuePositions(eventId: string) {
   const event = db.events.get(eventId);
@@ -98,7 +105,10 @@ export function recalcQueuePositions(eventId: string) {
   }));
 }
 
-export function addWaitlistEntry(eventId: string, payload: Pick<WaitlistEntry, 'name' | 'partySize' | 'type' | 'specialRequests'>) {
+export function addWaitlistEntry(
+  eventId: string,
+  payload: Pick<WaitlistEntry, 'name' | 'partySize' | 'type' | 'specialRequests' | 'createdByUserId'>,
+) {
   const event = db.events.get(eventId);
   if (!event) return null;
 
@@ -113,6 +123,7 @@ export function addWaitlistEntry(eventId: string, payload: Pick<WaitlistEntry, '
     estimatedWait: Math.max(5, (event.waitlist.length + 1) * 8),
     specialRequests: payload.specialRequests,
     joinedAt: new Date().toISOString(),
+    createdByUserId: payload.createdByUserId,
   };
 
   event.waitlist.push(entry);

@@ -1,6 +1,17 @@
+import { appStorage } from './appStorage';
+
 // Simplified event types for multi-business support
-export type EventType = 'capacity-based' | 'table-based';
+export type EventType = 'capacity-based' | 'table-based' | 'simple-capacity';
 export type EventStatus = 'active' | 'paused' | 'closed';
+export type QueueMode = 'single' | 'multiple';
+
+export interface Queue {
+  id: string;
+  name: string;
+  capacity: number;
+  currentCount: number;
+  eventDateTime?: Date; // Optional date/time for this specific queue
+}
 
 export interface BaseEvent {
   id: string;
@@ -9,14 +20,19 @@ export interface BaseEvent {
   type: EventType;
   status: EventStatus;
   createdAt: Date;
+  archived?: boolean;
+  archivedAt?: Date;
 }
 
 export interface CapacityBasedEvent extends BaseEvent {
   type: 'capacity-based';
-  capacity: number;
+  queueMode: QueueMode;
+  capacity: number; // Used for single queue mode
   estimatedWaitPerPerson: number; // minutes
   location: string;
-  currentCount: number; // Number of people in queue/waiting
+  currentCount: number; // Number of people in queue/waiting (single mode)
+  queues?: Queue[]; // Array of queues for multiple mode
+  eventDateTime?: Date; // Optional date/time for the event
 }
 
 export interface TableBasedEvent extends BaseEvent {
@@ -26,20 +42,35 @@ export interface TableBasedEvent extends BaseEvent {
   reservationDuration: number; // minutes
   noShowPolicy: string;
   currentFilledTables: number;
+  eventDateTime?: Date; // Optional date/time for the event
 }
 
-export type Event = CapacityBasedEvent | TableBasedEvent;
+export interface SimpleCapacityEvent extends BaseEvent {
+  type: 'simple-capacity';
+  capacity: number;
+  estimatedWaitPerPerson: number; // minutes
+  location: string;
+  currentCount: number; // Number of people in queue/waiting
+}
+
+export type Event = CapacityBasedEvent | TableBasedEvent | SimpleCapacityEvent;
 
 // Get all events
 export const getStoredEvents = (): Event[] => {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('events');
+    const saved = appStorage.getItem('events');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         return parsed.map((event: any) => ({
           ...event,
           createdAt: new Date(event.createdAt),
+          archivedAt: event.archivedAt ? new Date(event.archivedAt) : undefined,
+          eventDateTime: event.eventDateTime ? new Date(event.eventDateTime) : undefined,
+          queues: event.queues?.map((queue: any) => ({
+            ...queue,
+            eventDateTime: queue.eventDateTime ? new Date(queue.eventDateTime) : undefined,
+          })),
         }));
       } catch (e) {
         console.error('Error loading events from localStorage:', e);
@@ -52,7 +83,7 @@ export const getStoredEvents = (): Event[] => {
 // Save events
 export const saveEvents = (events: Event[]) => {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('events', JSON.stringify(events));
+    appStorage.setItem('events', JSON.stringify(events));
   }
 };
 
@@ -73,11 +104,41 @@ export const updateEvent = (eventId: string, updates: Partial<Event>) => {
   }
 };
 
-// Delete an event
+// Archive an event
+export const archiveEvent = (eventId: string) => {
+  const events = getStoredEvents();
+  const index = events.findIndex(e => e.id === eventId);
+  if (index !== -1) {
+    events[index] = { ...events[index], archived: true, archivedAt: new Date() };
+    saveEvents(events);
+  }
+};
+
+// Restore an archived event
+export const restoreEvent = (eventId: string) => {
+  const events = getStoredEvents();
+  const index = events.findIndex(e => e.id === eventId);
+  if (index !== -1) {
+    events[index] = { ...events[index], archived: false, archivedAt: undefined };
+    saveEvents(events);
+  }
+};
+
+// Permanently delete an event
 export const deleteEvent = (eventId: string) => {
   const events = getStoredEvents();
   const filtered = events.filter(e => e.id !== eventId);
   saveEvents(filtered);
+};
+
+// Get active (non-archived) events
+export const getActiveEvents = (): Event[] => {
+  return getStoredEvents().filter(e => !e.archived);
+};
+
+// Get archived events
+export const getArchivedEvents = (): Event[] => {
+  return getStoredEvents().filter(e => e.archived);
 };
 
 // Get events by business

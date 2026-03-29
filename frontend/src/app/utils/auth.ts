@@ -1,3 +1,5 @@
+import { appStorage } from './appStorage';
+
 export interface User {
   id: string;
   email: string;
@@ -15,7 +17,7 @@ export interface Business {
 // Auth state management
 export const getStoredUser = (): User | null => {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('currentUser');
+    const saved = appStorage.getItem('currentUser');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -30,9 +32,9 @@ export const getStoredUser = (): User | null => {
 export const setStoredUser = (user: User | null) => {
   if (typeof window !== 'undefined') {
     if (user) {
-      localStorage.setItem('currentUser', JSON.stringify(user));
+      appStorage.setItem('currentUser', JSON.stringify(user));
     } else {
-      localStorage.removeItem('currentUser');
+      appStorage.removeItem('currentUser');
     }
   }
 };
@@ -40,7 +42,7 @@ export const setStoredUser = (user: User | null) => {
 // Mock user database (in-memory for MVP)
 const getUsersDb = (): User[] => {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('usersDb');
+    const saved = appStorage.getItem('usersDb');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -54,13 +56,13 @@ const getUsersDb = (): User[] => {
 
 const saveUsersDb = (users: User[]) => {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('usersDb', JSON.stringify(users));
+    appStorage.setItem('usersDb', JSON.stringify(users));
   }
 };
 
 const getPasswordsDb = (): Record<string, string> => {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('passwordsDb');
+    const saved = appStorage.getItem('passwordsDb');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -74,13 +76,13 @@ const getPasswordsDb = (): Record<string, string> => {
 
 const savePasswordsDb = (passwords: Record<string, string>) => {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('passwordsDb', JSON.stringify(passwords));
+    appStorage.setItem('passwordsDb', JSON.stringify(passwords));
   }
 };
 
 const getBusinessesDb = (): Business[] => {
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('businessesDb');
+    const saved = appStorage.getItem('businessesDb');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -94,7 +96,7 @@ const getBusinessesDb = (): Business[] => {
 
 const saveBusinessesDb = (businesses: Business[]) => {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('businessesDb', JSON.stringify(businesses));
+    appStorage.setItem('businessesDb', JSON.stringify(businesses));
   }
 };
 

@@ -24,8 +24,8 @@ export function Signup({ onSignupUser, onSignupBusiness, onBackToWelcome, onSwit
       return;
     }
 
-    if (password.length < 6) {
-      toast.error('Password must be at least 6 characters');
+    if (password.length < 12) {
+      toast.error('Password must be at least 12 characters');
       return;
     }
 
@@ -141,7 +141,7 @@ export function Signup({ onSignupUser, onSignupBusiness, onBackToWelcome, onSwit
                   placeholder="••••••••"
                 />
               </div>
-              <p className="text-xs text-gray-500 mt-1">At least 6 characters</p>
+              <p className="text-xs text-gray-500 mt-1">At least 12 characters</p>
             </div>
 
             {/* Name */}
