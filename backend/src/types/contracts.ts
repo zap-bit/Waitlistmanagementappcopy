@@ -1,66 +1,19 @@
-export type EntryType = 'reservation' | 'waitlist';
-export type EntryStatus = 'QUEUED' | 'NOTIFIED' | 'SEATED' | 'NO_SHOW' | 'CANCELLED' | 'EXPIRED';
+export type AccountType = 'USER' | 'BUSINESS';
+export type EventType = 'TABLE' | 'CAPACITY';
+export type CapType = 'SINGLE' | 'MULTI' | 'ATTENDANCE';
+export type ExitReason = 'SERVED' | 'CANCEL' | 'NO_SHOW';
 
-export type EventType = 'capacity-based' | 'table-based';
-export type EventStatus = 'active' | 'paused' | 'closed';
-
-export interface WaitlistEntry {
-  id: string;
-  eventId: string;
+export interface AccountModel {
+  UUID: string;
   name: string;
-  partySize: number;
-  type: EntryType;
-  status: EntryStatus;
-  position: number;
-  estimatedWait: number;
-  specialRequests?: string;
-  joinedAt: string;
-  createdByUserId: string;
+  account_type: AccountType;
+  email: string;
+  password: string;
+  business_name: string | null;
+  phone: string | null;
 }
 
-export interface Table {
-  id: number;
-  row: number;
-  col: number;
-  name: string;
-  capacity: number;
-  occupied: boolean;
-  guestName?: string;
-  partySize?: number;
-  seatedAt?: string;
-}
-
-export interface BaseEvent {
-  id: string;
-  businessId: string;
-  name: string;
-  type: EventType;
-  status: EventStatus;
-  createdAt: string;
-  waitlist: WaitlistEntry[];
-  tables: Table[];
-}
-
-export interface CapacityEvent extends BaseEvent {
-  type: 'capacity-based';
-  capacity: number;
-  estimatedWaitPerPerson: number;
-  location: string;
-  currentCount: number;
-}
-
-export interface TableEvent extends BaseEvent {
-  type: 'table-based';
-  numberOfTables: number;
-  averageTableSize: number;
-  reservationDuration: number;
-  noShowPolicy: string;
-  currentFilledTables: number;
-}
-
-export type EventModel = CapacityEvent | TableEvent;
-
-export interface UserModel {
+export interface SessionUser {
   id: string;
   email: string;
   name: string;
@@ -68,10 +21,38 @@ export interface UserModel {
   businessId?: string;
 }
 
-export interface BusinessModel {
-  id: string;
+export interface EventModel {
+  UUID: string;
+  account_uuid: string;
   name: string;
-  ownerId: string;
+  event_type: EventType;
+  archived: boolean;
+  location: string | null;
+  cap_type: CapType | null;
+  queue_capacity: number | null;
+  est_wait: number | null;
+  num_tables: number | null;
+  avg_size: number | null;
+  reservation_duration: number | null;
+  no_show_policy: number | null;
+  no_show_rate: number | null;
+  avg_service_time: number | null;
+}
+
+export interface PartyModel {
+  UUID: string;
+  account_uuid: string;
+  event_uuid: string;
+  party_size: number;
+  special_req: string | null;
+}
+
+export interface EventTableModel {
+  UUID: string;
+  account_uuid: string | null;
+  event_uuid: string;
+  table_capacity: number;
+  name: string;
 }
 
 export interface AccessSession {

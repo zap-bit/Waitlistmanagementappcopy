@@ -21,6 +21,7 @@ export function issueSession(userId: string) {
     accessToken,
     refreshToken,
     expiresIn: Math.floor(config.accessTokenTtlMs / 1000),
+    userId,
   };
 }
 

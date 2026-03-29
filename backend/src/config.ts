@@ -21,4 +21,7 @@ export function assertConfig(): void {
   if (config.corsAllowedOrigins.length === 0) {
     throw new Error('CORS_ALLOWED_ORIGINS must include at least one origin');
   }
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+  }
 }
