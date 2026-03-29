@@ -17,6 +17,7 @@ import {
   User 
 } from './utils/auth';
 import { getStoredEvents, CapacityBasedEvent, TableBasedEvent } from './utils/events';
+import { apiClient } from '../api/client';
 
 type Role = 'staff' | 'attendee' | null;
 type AuthScreen = 'welcome' | 'login' | 'signup' | null;
@@ -121,7 +122,8 @@ export default function App() {
     }
   };
 
-  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => {
+  const addToWaitlist = async (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => {
+    if (!eventId) throw new Error('Event is required');
     // Calculate estimated wait based on event settings
     let estimatedWait = 15; // Default fallback
     
@@ -153,15 +155,16 @@ export default function App() {
       estimatedWait = 15 + waitlist.length * 5;
     }
     
+    const created = await apiClient.addToWaitlist(eventId, { name, partySize, type, specialRequests });
     const newEntry: WaitlistEntry = {
-      id: Date.now().toString(),
-      name,
-      partySize,
-      joinedAt: new Date(),
-      estimatedWait: Math.round(estimatedWait),
-      specialRequests,
-      type,
-      eventId,
+      id: created.id,
+      name: created.name,
+      partySize: created.partySize,
+      joinedAt: new Date(created.joinedAt),
+      estimatedWait: created.estimatedWait ?? Math.round(estimatedWait),
+      specialRequests: created.specialRequests,
+      type: created.type,
+      eventId: created.eventId,
       queueId,
       reservationTime,
     };
@@ -169,7 +172,11 @@ export default function App() {
     return newEntry.id;
   };
 
-  const removeFromWaitlist = (id: string) => {
+  const removeFromWaitlist = async (id: string) => {
+    const entry = waitlist.find((e) => e.id === id);
+    if (entry?.eventId) {
+      await apiClient.removeWaitlistEntry(entry.eventId, id);
+    }
     setWaitlist((prev) => prev.filter((e) => e.id !== id));
   };
 

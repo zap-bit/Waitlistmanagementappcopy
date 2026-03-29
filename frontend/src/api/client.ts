@@ -13,24 +13,20 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
 const EVENT_ID = import.meta.env.VITE_EVENT_ID || 'demo-event';
-const TOKEN_STORAGE_KEY = 'authToken';
-const REFRESH_TOKEN_STORAGE_KEY = 'refreshToken';
+let accessToken: string | null = null;
+let refreshTokenCache: string | null = null;
 
 function getStoredToken(): string | null {
-  return typeof window !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  return accessToken;
 }
 
 function getStoredRefreshToken(): string | null {
-  return typeof window !== 'undefined' ? localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) : null;
+  return refreshTokenCache;
 }
 
 function setStoredTokens(token: string | null, refreshToken?: string | null): void {
-  if (typeof window === 'undefined') return;
-  if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
-  else localStorage.removeItem(TOKEN_STORAGE_KEY);
-
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
-  else if (refreshToken === null) localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+  accessToken = token;
+  if (refreshToken !== undefined) refreshTokenCache = refreshToken;
 }
 
 async function request<T>(path: string, init?: RequestInit, retry = true): Promise<T> {

@@ -13,8 +13,8 @@ import { calculateDynamicWaitTime } from '../utils/waitTime';
 interface AttendeeViewProps {
   onLogout: () => void;
   waitlist: WaitlistEntry[];
-  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => string;
-  removeFromWaitlist: (id: string) => void;
+  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => Promise<string>;
+  removeFromWaitlist: (id: string) => Promise<void>;
   updateWaitlistEntry: (id: string, updates: Partial<Omit<WaitlistEntry, 'id' | 'joinedAt'>>) => void;
   allWaitlistEntries: WaitlistEntry[];
   tables: Table[];
@@ -237,7 +237,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     }
   };
 
-  const handleJoinManually = () => {
+  const handleJoinManually = async () => {
     if (!guestName.trim()) {
       toast.error('Please enter your name');
       return;
@@ -256,7 +256,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       reservationDateTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), parseInt(hours), parseInt(minutes));
     }
 
-    const newId = addToWaitlist(
+    const newId = await addToWaitlist(
       guestName.trim(), 
       partySize, 
       specialRequests.trim() || undefined,
@@ -285,7 +285,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     setSelectedQueue(null);
   };
 
-  const handleAddAnother = () => {
+  const handleAddAnother = async () => {
     if (!guestName.trim()) {
       toast.error('Please enter a name');
       return;
@@ -321,7 +321,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       setReservationTime('');
     } else {
       // Add new guest to waitlist
-      const newId = addToWaitlist(
+      const newId = await addToWaitlist(
         guestName.trim(), 
         partySize, 
         specialRequests.trim() || undefined,
@@ -340,10 +340,10 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     }
   };
 
-  const handleLeaveWaitlist = () => {
+  const handleLeaveWaitlist = async () => {
     if (!selectedWaitlistId) return;
     
-    removeFromWaitlist(selectedWaitlistId);
+    await removeFromWaitlist(selectedWaitlistId);
     setMyWaitlistIds(myWaitlistIds.filter(id => id !== selectedWaitlistId));
     setViewingStatus(false);
     setSelectedWaitlistId(null);

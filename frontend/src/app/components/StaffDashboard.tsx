@@ -11,6 +11,7 @@ import { WaitlistEntry } from '../App';
 import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent, syncEventsFromApi } from '../utils/events';
 import { User } from '../utils/auth';
 import { Profile } from './Profile';
+import { apiClient } from '../../api/client';
 
 interface Attraction {
   id: string;
@@ -138,6 +139,30 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     setTimeout(() => setIsSyncing(false), 1000);
   };
 
+  const refreshSelectedEventState = async (eventId?: string) => {
+    const targetEventId = eventId || selectedEvent?.id;
+    if (!targetEventId) return;
+    const dashboard = await apiClient.getDashboard(targetEventId);
+    setWaitlist(
+      dashboard.waitlist.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        partySize: entry.partySize,
+        joinedAt: new Date(entry.joinedAt),
+        estimatedWait: entry.estimatedWait,
+        specialRequests: entry.specialRequests,
+        type: entry.type,
+        eventId: entry.eventId,
+      }))
+    );
+    setTables(
+      dashboard.tables.map((table) => ({
+        ...table,
+        seatedAt: table.seatedAt ? new Date(table.seatedAt) : undefined,
+      }))
+    );
+  };
+
   const handleDecreaseCapacity = () => {
     if (currentCapacity > 0) {
       setCurrentCapacity((prev) => prev - 1);
@@ -152,90 +177,39 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
-  const handlePromote = (id: string) => {
-    const entry = waitlist.find((e) => e.id === id);
-    if (!entry) return;
-
-    const availableTable = tables.find(
-      (t) => !t.occupied && t.capacity >= entry.partySize
-    );
-
-    if (availableTable) {
-      const updatedTables = tables.map((t) =>
-        t.id === availableTable.id
-          ? {
-              ...t,
-              occupied: true,
-              guestName: entry.name,
-              partySize: entry.partySize,
-              seatedAt: new Date(),
-            }
-          : t
-      );
-      
-      setTables(updatedTables);
-      setWaitlist(waitlist.filter((e) => e.id !== id));
-      
-      // Update event's currentFilledTables count
-      if (selectedEvent && selectedEvent.type === 'table-based') {
-        const filledCount = updatedTables.filter(t => t.occupied).length;
-        updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
-        setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
-        setEvents(getStoredEvents());
-        saveEventTables(selectedEvent.id, updatedTables);
-      }
-      
-      toast.success(`${entry.name} seated at ${availableTable.name}`, {
-        description: `Party of ${entry.partySize}`,
-      });
-      simulateSync();
-    } else {
-      toast.error('No available tables for this party size', {
-        description: `Need table for ${entry.partySize} guests`,
-      });
+  const handlePromote = async (id: string) => {
+    if (!selectedEvent) {
+      toast.error('Select an event first');
+      return;
     }
+    await apiClient.promoteWaitlistEntry(selectedEvent.id, id);
+    await refreshSelectedEventState(selectedEvent.id);
+    simulateSync();
   };
 
-  const handleSeatAll = () => {
+  const handleSeatAll = async () => {
+    if (!selectedEvent) {
+      toast.error('Select an event first');
+      return;
+    }
     const reservations = waitlist.filter((e) => e.type === 'reservation');
     if (reservations.length === 0) return;
 
     let seatedCount = 0;
     const newTables = [...tables];
-    const newWaitlist = [...waitlist];
-
-    reservations.forEach((entry) => {
+    for (const entry of reservations) {
       const availableTableIndex = newTables.findIndex(
         (t) => !t.occupied && t.capacity >= entry.partySize
       );
 
       if (availableTableIndex !== -1) {
-        newTables[availableTableIndex] = {
-          ...newTables[availableTableIndex],
-          occupied: true,
-          guestName: entry.name,
-          partySize: entry.partySize,
-          seatedAt: new Date(),
-        };
-        const entryIndex = newWaitlist.findIndex((e) => e.id === entry.id);
-        if (entryIndex !== -1) {
-          newWaitlist.splice(entryIndex, 1);
-          seatedCount++;
-        }
+        const table = newTables[availableTableIndex];
+        await apiClient.seatWaitlistEntry(selectedEvent.id, entry.id, table.id);
+        newTables[availableTableIndex] = { ...table, occupied: true };
+        seatedCount++;
       }
-    });
-
-    setTables(newTables);
-    setWaitlist(newWaitlist);
-    
-    // Update event's currentFilledTables count
-    if (selectedEvent && selectedEvent.type === 'table-based') {
-      const filledCount = newTables.filter(t => t.occupied).length;
-      updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
-      setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
-      setEvents(getStoredEvents());
-      saveEventTables(selectedEvent.id, newTables);
     }
+    await refreshSelectedEventState(selectedEvent.id);
     
     if (seatedCount > 0) {
       toast.success(`Seated ${seatedCount} ${seatedCount === 1 ? 'guest' : 'groups'}`);
@@ -245,16 +219,30 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
-  const handleNoShow = (id: string) => {
+  const handleNoShow = async (id: string) => {
+    if (!selectedEvent) {
+      toast.error('Select an event first');
+      return;
+    }
     const entry = waitlist.find((e) => e.id === id);
     if (!entry) return;
-
-    setWaitlist(waitlist.filter((e) => e.id !== id));
+    await apiClient.removeWaitlistEntry(selectedEvent.id, id);
+    await refreshSelectedEventState(selectedEvent.id);
     toast.error(`${entry.name} marked as no-show`);
     simulateSync();
   };
 
-  const handleClearTable = (tableId: number) => {
+  const handleClearTable = async (tableId: number) => {
+    if (selectedEvent) {
+      await apiClient.clearTable(selectedEvent.id, tableId);
+      await refreshSelectedEventState(selectedEvent.id);
+      simulateSync();
+      return;
+    }
+    toast.error('Select an event first');
+  };
+
+  const handleClearTableLocal = (tableId: number) => {
     const table = tables.find((t) => t.id === tableId);
     if (!table) return;
 
@@ -310,7 +298,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     );
     setTables(updatedTables);
     
-    // Save tables to localStorage
+    // Persist updated tables for the selected event state
     if (selectedEvent && selectedEvent.type === 'table-based') {
       saveEventTables(selectedEvent.id, updatedTables);
     }
@@ -325,7 +313,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     );
     setTables(updatedTables);
     
-    // Save tables to localStorage
+    // Persist updated tables for the selected event state
     if (selectedEvent && selectedEvent.type === 'table-based') {
       saveEventTables(selectedEvent.id, updatedTables);
     }
@@ -383,7 +371,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     setTotalTables(newCount);
     setTables(newTables);
     
-    // Save tables to localStorage
+    // Persist updated tables for the selected event state
     if (selectedEvent && selectedEvent.type === 'table-based') {
       saveEventTables(selectedEvent.id, newTables);
       // Also update the event's numberOfTables
