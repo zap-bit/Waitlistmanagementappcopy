@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-function loadDotEnvIfPresent() {
-  const envPath = resolve(process.cwd(), '.env');
-  if (!existsSync(envPath)) return;
+function loadEnvFromPath(envPath: string) {
+  if (!existsSync(envPath)) return false;
 
   const lines = readFileSync(envPath, 'utf8').split(/\r?\n/);
   for (const rawLine of lines) {
@@ -15,10 +15,23 @@ function loadDotEnvIfPresent() {
 
     const key = line.slice(0, equalIndex).trim();
     const value = line.slice(equalIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+    if (key && process.env[key] === undefined) process.env[key] = value;
+  }
 
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value;
-    }
+  return true;
+}
+
+function loadDotEnvIfPresent() {
+  const thisFileDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(process.cwd(), '.env'),
+    resolve(process.cwd(), 'backend/.env'),
+    resolve(thisFileDir, '../.env'),
+    resolve(thisFileDir, '../../.env'),
+  ];
+
+  for (const candidate of candidates) {
+    if (loadEnvFromPath(candidate)) return;
   }
 }
 
