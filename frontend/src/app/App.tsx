@@ -15,6 +15,7 @@ import {
   logout as authLogout,
   User 
 } from './utils/auth';
+import { getStoredEvents, CapacityBasedEvent, TableBasedEvent } from './utils/events';
 
 type Role = 'staff' | 'attendee' | null;
 type AuthScreen = 'welcome' | 'login' | 'signup' | null;
@@ -28,6 +29,8 @@ export interface WaitlistEntry {
   specialRequests?: string;
   type: 'reservation' | 'waitlist';
   eventId?: string;
+  queueId?: string; // For multiple-queue capacity events
+  reservationTime?: Date; // Optional time for reservation
 }
 
 const getInitialWaitlist = (): WaitlistEntry[] => {
@@ -40,6 +43,7 @@ const getInitialWaitlist = (): WaitlistEntry[] => {
           ...entry,
           joinedAt: new Date(entry.joinedAt),
           type: entry.type || 'waitlist', // Default to 'waitlist' if type is missing
+          reservationTime: entry.reservationTime ? new Date(entry.reservationTime) : undefined,
         }));
       } catch (e) {
         console.error('Error loading waitlist from localStorage:', e);
@@ -203,16 +207,49 @@ export default function App() {
     }
   };
 
-  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string) => {
+  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => {
+    // Calculate estimated wait based on event settings
+    let estimatedWait = 15; // Default fallback
+    
+    if (eventId) {
+      const event = getStoredEvents().find(e => e.id === eventId);
+      if (event && event.type === 'capacity-based') {
+        const capacityEvent = event as CapacityBasedEvent;
+        
+        // Count people ahead in the same queue/event
+        let peopleAhead = 0;
+        if (capacityEvent.queueMode === 'multiple' && queueId) {
+          // For multiple queues, count only people in the same queue
+          peopleAhead = waitlist.filter(e => e.eventId === eventId && e.queueId === queueId).length;
+        } else {
+          // For single queue, count all people in the event
+          peopleAhead = waitlist.filter(e => e.eventId === eventId).length;
+        }
+        
+        // Calculate wait time: people ahead × wait time per person
+        estimatedWait = peopleAhead * capacityEvent.estimatedWaitPerPerson;
+      } else if (event && event.type === 'table-based') {
+        const tableEvent = event as TableBasedEvent;
+        // For table-based events, use reservation duration
+        const peopleAhead = waitlist.filter(e => e.eventId === eventId && e.type === type).length;
+        estimatedWait = peopleAhead * (tableEvent.reservationDuration / tableEvent.averageTableSize);
+      }
+    } else {
+      // Legacy fallback for entries without eventId
+      estimatedWait = 15 + waitlist.length * 5;
+    }
+    
     const newEntry: WaitlistEntry = {
       id: Date.now().toString(),
       name,
       partySize,
       joinedAt: new Date(),
-      estimatedWait: 15 + waitlist.length * 5,
+      estimatedWait: Math.round(estimatedWait),
       specialRequests,
       type,
       eventId,
+      queueId,
+      reservationTime,
     };
     setWaitlist((prev) => [...prev, newEntry]);
     return newEntry.id;
@@ -220,6 +257,12 @@ export default function App() {
 
   const removeFromWaitlist = (id: string) => {
     setWaitlist((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  const updateWaitlistEntry = (id: string, updates: Partial<Omit<WaitlistEntry, 'id' | 'joinedAt'>>) => {
+    setWaitlist((prev) => prev.map((entry) => 
+      entry.id === id ? { ...entry, ...updates } : entry
+    ));
   };
 
   // Show auth screens if not logged in
@@ -274,6 +317,7 @@ export default function App() {
           setWaitlist={setWaitlist}
           tables={tables}
           setTables={setTables}
+          user={user!}
         />
         <Toaster position="top-center" />
       </>
@@ -288,8 +332,10 @@ export default function App() {
           waitlist={waitlist}
           addToWaitlist={addToWaitlist}
           removeFromWaitlist={removeFromWaitlist}
+          updateWaitlistEntry={updateWaitlistEntry}
           allWaitlistEntries={waitlist}
           tables={tables}
+          user={user!}
         />
         <Toaster position="top-center" />
       </>

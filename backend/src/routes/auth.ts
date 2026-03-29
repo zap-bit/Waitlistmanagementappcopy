@@ -3,123 +3,192 @@ import { nanoid } from 'nanoid';
 import { db } from '../data/store.js';
 import { ApiError } from '../middleware/error.js';
 import type { BusinessModel, UserModel } from '../types/contracts.js';
+import { hashPassword, verifyPassword } from '../lib/security.js';
+import { issueSession, revokeAccessToken, revokeRefreshToken, rotateRefreshToken } from '../lib/session.js';
+import { requireAuth } from '../middleware/auth.js';
 
 export const authRouter = Router();
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const sanitizeUser = (user: UserModel) => ({
+  id: user.id,
+  email: user.email,
+  name: user.name,
+  role: user.role,
+  businessId: user.businessId,
+});
+
 const toAuthResponse = (user: UserModel) => {
-  const token = `demo-token-${nanoid()}`;
-  db.tokens.set(token, user.id);
+  const session = issueSession(user.id);
   return {
-    token,
-    expiresIn: 86400,
-    user,
+    token: session.accessToken,
+    refreshToken: session.refreshToken,
+    expiresIn: session.expiresIn,
+    user: sanitizeUser(user),
   };
 };
 
-authRouter.post('/login', (req, res, next) => {
-  const { email, password } = req.body ?? {};
+function validateEmail(email: unknown): string {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!EMAIL_REGEX.test(normalizedEmail)) {
+    throw new ApiError(400, 'INVALID_INPUT', 'A valid email address is required');
+  }
+  return normalizedEmail;
+}
 
-  if (!email || !password) {
-    return next(new ApiError(400, 'INVALID_INPUT', 'email and password are required'));
+function validatePassword(password: unknown): string {
+  const value = String(password || '');
+  if (value.length < 12) {
+    // #SPEC GAP: password policy details were not fully specified in the repo docs, so 12 characters is enforced here as a secure default.
+    throw new ApiError(400, 'INVALID_INPUT', 'Password must be at least 12 characters');
+  }
+  return value;
+}
+
+function validateName(name: unknown, fieldName: string): string {
+  const value = String(name || '').trim();
+  if (value.length < 2 || value.length > 80) {
+    throw new ApiError(400, 'INVALID_INPUT', `${fieldName} must be between 2 and 80 characters`);
+  }
+  return value;
+}
+
+authRouter.post('/login', async (req, res, next) => {
+  try {
+    const email = validateEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    if (!password) {
+      return next(new ApiError(400, 'INVALID_INPUT', 'email and password are required'));
+    }
+
+    const userId = db.usersByEmail.get(email);
+    if (!userId) {
+      return next(new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password'));
+    }
+
+    const savedPasswordHash = db.passwordHashes.get(userId);
+    if (!savedPasswordHash || !(await verifyPassword(password, savedPasswordHash))) {
+      return next(new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password'));
+    }
+
+    const user = db.users.get(userId);
+    if (!user) {
+      return next(new ApiError(500, 'SERVER_ERROR', 'User store is inconsistent'));
+    }
+
+    return res.json(toAuthResponse(user));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+authRouter.post('/signup/user', async (req, res, next) => {
+  try {
+    const email = validateEmail(req.body?.email);
+    const password = validatePassword(req.body?.password);
+    const name = validateName(req.body?.name, 'name');
+
+    if (db.usersByEmail.has(email)) {
+      return next(new ApiError(409, 'EMAIL_EXISTS', 'Email already exists'));
+    }
+
+    const user: UserModel = {
+      id: nanoid(),
+      email,
+      name,
+      role: 'user',
+    };
+
+    db.users.set(user.id, user);
+    db.usersByEmail.set(email, user.id);
+    db.passwordHashes.set(user.id, await hashPassword(password));
+
+    return res.status(201).json(toAuthResponse(user));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+authRouter.post('/signup/business', async (req, res, next) => {
+  try {
+    const email = validateEmail(req.body?.email);
+    const password = validatePassword(req.body?.password);
+    const ownerName = validateName(req.body?.ownerName, 'ownerName');
+    const businessName = validateName(req.body?.businessName, 'businessName');
+
+    if (db.usersByEmail.has(email)) {
+      return next(new ApiError(409, 'EMAIL_EXISTS', 'Email already exists'));
+    }
+
+    const business: BusinessModel = {
+      id: `biz-${nanoid()}`,
+      name: businessName,
+      ownerId: '',
+    };
+
+    const user: UserModel = {
+      id: nanoid(),
+      email,
+      name: ownerName,
+      role: 'staff',
+      businessId: business.id,
+    };
+
+    business.ownerId = user.id;
+
+    db.businesses.set(business.id, business);
+    db.users.set(user.id, user);
+    db.usersByEmail.set(email, user.id);
+    db.passwordHashes.set(user.id, await hashPassword(password));
+
+    return res.status(201).json(toAuthResponse(user));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+authRouter.post('/refresh', (req, res, next) => {
+  const refreshToken = String(req.body?.refreshToken || '');
+  if (!refreshToken) {
+    return next(new ApiError(400, 'INVALID_INPUT', 'refreshToken is required'));
   }
 
-  const userId = db.usersByEmail.get(String(email).toLowerCase());
-  if (!userId) {
-    return next(new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password'));
+  const session = rotateRefreshToken(refreshToken);
+  if (!session) {
+    return next(new ApiError(401, 'UNAUTHORIZED', 'Refresh token expired or invalid'));
   }
 
-  const savedPassword = db.passwords.get(userId);
-  if (savedPassword !== password) {
-    return next(new ApiError(401, 'INVALID_CREDENTIALS', 'Invalid email or password'));
-  }
-
-  const user = db.users.get(userId);
+  const user = db.users.get(db.accessTokens.get(session.accessToken)?.userId || '');
   if (!user) {
-    return next(new ApiError(500, 'SERVER_ERROR', 'User store is inconsistent'));
+    revokeAccessToken(session.accessToken);
+    revokeRefreshToken(session.refreshToken);
+    return next(new ApiError(401, 'UNAUTHORIZED', 'Refresh token user not found'));
   }
 
-  return res.json(toAuthResponse(user));
+  return res.json({
+    token: session.accessToken,
+    refreshToken: session.refreshToken,
+    expiresIn: session.expiresIn,
+    user: sanitizeUser(user),
+  });
 });
 
-authRouter.post('/signup/user', (req, res, next) => {
-  const { email, password, name } = req.body ?? {};
-
-  if (!email || !password || !name) {
-    return next(new ApiError(400, 'INVALID_INPUT', 'email, password and name are required'));
-  }
-
-  const normalizedEmail = String(email).toLowerCase();
-  if (db.usersByEmail.has(normalizedEmail)) {
-    return next(new ApiError(409, 'EMAIL_EXISTS', 'Email already exists'));
-  }
-
-  const user: UserModel = {
-    id: nanoid(),
-    email,
-    name,
-    role: 'user',
-  };
-
-  db.users.set(user.id, user);
-  db.usersByEmail.set(normalizedEmail, user.id);
-  db.passwords.set(user.id, password);
-
-  return res.status(201).json(toAuthResponse(user));
+authRouter.post('/logout', requireAuth, (req, res) => {
+  revokeAccessToken(req.authAccessToken);
+  const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : undefined;
+  revokeRefreshToken(refreshToken);
+  return res.json({ ok: true });
 });
 
-authRouter.post('/signup/business', (req, res, next) => {
-  const { email, password, ownerName, businessName } = req.body ?? {};
-
-  if (!email || !password || !ownerName || !businessName) {
-    return next(new ApiError(400, 'INVALID_INPUT', 'email, password, ownerName and businessName are required'));
-  }
-
-  const normalizedEmail = String(email).toLowerCase();
-  if (db.usersByEmail.has(normalizedEmail)) {
-    return next(new ApiError(409, 'EMAIL_EXISTS', 'Email already exists'));
-  }
-
-  const business: BusinessModel = {
-    id: `biz-${nanoid()}`,
-    name: businessName,
-    ownerId: '',
-  };
-
-  const user: UserModel = {
-    id: nanoid(),
-    email,
-    name: ownerName,
-    role: 'staff',
-    businessId: business.id,
-  };
-
-  business.ownerId = user.id;
-
-  db.businesses.set(business.id, business);
-  db.users.set(user.id, user);
-  db.usersByEmail.set(normalizedEmail, user.id);
-  db.passwords.set(user.id, password);
-
-  return res.status(201).json(toAuthResponse(user));
+authRouter.get('/me', requireAuth, (req, res) => {
+  return res.json({ user: sanitizeUser(req.authUser!) });
 });
 
-authRouter.get('/me', (req, res, next) => {
-  const authHeader = req.header('authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return next(new ApiError(401, 'UNAUTHORIZED', 'Missing bearer token'));
-  }
+authRouter.get('/me/waitlist', requireAuth, (req, res) => {
+  const entries = Array.from(db.events.values()).flatMap((event) =>
+    event.waitlist.filter((entry) => entry.createdByUserId === req.authUser!.id),
+  );
 
-  const token = authHeader.replace('Bearer ', '').trim();
-  const userId = db.tokens.get(token);
-  if (!userId) {
-    return next(new ApiError(401, 'UNAUTHORIZED', 'Invalid token'));
-  }
-
-  const user = db.users.get(userId);
-  if (!user) {
-    return next(new ApiError(401, 'UNAUTHORIZED', 'Invalid token user'));
-  }
-
-  return res.json({ user });
+  return res.json({ data: entries });
 });
-

@@ -7,9 +7,11 @@ export interface ApiWaitlistEntry {
   partySize: number;
   type: EntryType;
   status: 'QUEUED' | 'NOTIFIED' | 'SEATED' | 'NO_SHOW' | 'CANCELLED' | 'EXPIRED';
+  position: number;
   estimatedWait: number;
   specialRequests?: string;
   joinedAt: string;
+  createdByUserId: string;
 }
 
 export interface ApiTable {
@@ -71,6 +73,7 @@ export interface ApiUser {
 
 export interface AuthResponse {
   token: string;
+  refreshToken: string;
   expiresIn: number;
   user: ApiUser;
 }

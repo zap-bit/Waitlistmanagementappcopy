@@ -1,51 +1,76 @@
 import { useState, useEffect } from 'react';
 import { StatusBar } from './StatusBar';
 import { QRScanner } from './QRScanner';
-import { QrCode, Clock, Users, LogOut, X, Calendar, ListOrdered, Search, Ticket } from 'lucide-react';
+import { QrCode, Clock, Users, LogOut, X, Calendar, ListOrdered, Search, Ticket, User as UserIcon, Menu } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
 import { Table } from './TableGrid';
-import { getStoredEvents, Event } from '../utils/events';
+import { getStoredEvents, Event, CapacityBasedEvent, Queue } from '../utils/events';
+import { Profile, getSavedProfile } from './Profile';
+import { User } from '../utils/auth';
+import { calculateDynamicWaitTime } from '../utils/waitTime';
 
 interface AttendeeViewProps {
   onLogout: () => void;
   waitlist: WaitlistEntry[];
-  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string) => string;
+  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => string;
   removeFromWaitlist: (id: string) => void;
+  updateWaitlistEntry: (id: string, updates: Partial<Omit<WaitlistEntry, 'id' | 'joinedAt'>>) => void;
   allWaitlistEntries: WaitlistEntry[];
   tables: Table[];
+  user: User;
 }
 
-export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWaitlist, allWaitlistEntries, tables }: AttendeeViewProps) {
+export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWaitlist, updateWaitlistEntry, allWaitlistEntries, tables, user }: AttendeeViewProps) {
+  // Store multiple waitlist IDs
   const [myWaitlistIds, setMyWaitlistIds] = useState<string[]>(() => {
     if (typeof window !== 'undefined') {
-      const savedIds = localStorage.getItem('myWaitlistIds');
-      if (savedIds) {
+      const saved = localStorage.getItem('myWaitlistIds');
+      if (saved) {
         try {
-          const parsed = JSON.parse(savedIds);
-          if (Array.isArray(parsed)) {
-            return parsed;
-          }
+          return JSON.parse(saved);
         } catch (e) {
-          // fall through to legacy key
+          return [];
         }
       }
-
-      const legacyId = localStorage.getItem('myWaitlistId');
-      if (legacyId) return [legacyId];
     }
     return [];
   });
-  const [activeWaitlistId, setActiveWaitlistId] = useState<string | null>(null);
+  
+  // Currently selected waitlist entry to view
+  const [selectedWaitlistId, setSelectedWaitlistId] = useState<string | null>(null);
+  
   const [partySize, setPartySize] = useState(2);
   const [guestName, setGuestName] = useState('');
   const [specialRequests, setSpecialRequests] = useState('');
+  const [reservationTime, setReservationTime] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [showAddAnotherForm, setShowAddAnotherForm] = useState(false);
-  const [joinType, setJoinType] = useState<'choice' | 'event-selection' | 'reservation' | 'waitlist'>('choice');
+  const [showProfile, setShowProfile] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showMyEvents, setShowMyEvents] = useState(false);
+
+  // Update form fields when profile changes or on mount
+  useEffect(() => {
+    const savedProfile = getSavedProfile(user.id);
+    if (savedProfile) {
+      // Use saved profile if available
+      setGuestName(savedProfile.displayName || '');
+      setPartySize(savedProfile.defaultPartySize || 2);
+      setSpecialRequests(savedProfile.preferences || '');
+    } else {
+      // For new users without a profile, autofill from User object
+      setGuestName(user.name || '');
+      setPartySize(2);
+      setSpecialRequests('');
+    }
+  }, [user.id, user.name, showProfile]); // Re-run when showProfile changes (after closing profile modal)
+
+  const [joinType, setJoinType] = useState<'choice' | 'event-selection' | 'reservation' | 'waitlist' | 'queue-selection'>('choice');
   const [viewingStatus, setViewingStatus] = useState(false);
   const [eventCode, setEventCode] = useState('');
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [selectedQueue, setSelectedQueue] = useState<Queue | null>(null);
   const [availableEvents, setAvailableEvents] = useState<Event[]>([]);
   const [isOnline, setIsOnline] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -73,11 +98,8 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     if (typeof window !== 'undefined') {
       if (myWaitlistIds.length > 0) {
         localStorage.setItem('myWaitlistIds', JSON.stringify(myWaitlistIds));
-        // keep legacy key for backwards compatibility
-        localStorage.setItem('myWaitlistId', myWaitlistIds[0]);
       } else {
         localStorage.removeItem('myWaitlistIds');
-        localStorage.removeItem('myWaitlistId');
       }
     }
   }, [myWaitlistIds]);
@@ -88,101 +110,161 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     }
   }, [isOnline]);
 
-  // Find all of my active entries in the waitlist
-  const myEntries = allWaitlistEntries.filter((e) => myWaitlistIds.includes(e.id));
-  const isOnWaitlist = myEntries.length > 0;
-
-  // Pick active entry for status view (selected, otherwise first)
-  const myEntry = myEntries.find((e) => e.id === activeWaitlistId) || myEntries[0] || null;
+  // Find my entry in the waitlist or full list
+  const myEntry = allWaitlistEntries.find((e) => e.id === selectedWaitlistId);
+  const isOnWaitlist = !!myEntry;
   
   // Calculate position only for entries of the same type and event
   const sameTypeAndEventEntries = myEntry 
     ? allWaitlistEntries.filter(e => e.type === myEntry.type && e.eventId === myEntry.eventId) 
     : [];
-  const position = myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === myEntry.id) + 1 : 0;
-  const estimatedWaitMinutes = myEntry ? (myEntry.estimatedWait > 0 ? myEntry.estimatedWait : Math.max(5, position * 8)) : 0;
+  const position = myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === selectedWaitlistId) + 1 : 0;
+  
+  // Calculate dynamic wait time based on current position
+  const estimatedWaitMinutes = myEntry ? calculateDynamicWaitTime(myEntry, allWaitlistEntries) : 0;
   
   // Check if all tables are occupied
   const allTablesOccupied = tables.every((table) => table.occupied);
 
-  // Keep only active IDs that still exist in waitlist
+  // Clear stored ID if entry no longer exists in waitlist
   useEffect(() => {
-    const nextIds = myWaitlistIds.filter((id) => allWaitlistEntries.some((entry) => entry.id === id));
-    if (nextIds.length !== myWaitlistIds.length) {
-      setMyWaitlistIds(nextIds);
-      if (nextIds.length === 0) {
-        setViewingStatus(false);
-        setActiveWaitlistId(null);
-      } else if (!activeWaitlistId || !nextIds.includes(activeWaitlistId)) {
-        setActiveWaitlistId(nextIds[0]);
-      }
-      toast.info('One or more waitlist entries were seated or removed');
+    if (selectedWaitlistId && !myEntry) {
+      setMyWaitlistIds(myWaitlistIds.filter(id => id !== selectedWaitlistId));
+      setViewingStatus(false);
+      toast.info('You have been seated or removed from the waitlist');
     }
-  }, [myWaitlistIds, allWaitlistEntries, activeWaitlistId]);
+  }, [selectedWaitlistId, myEntry]);
 
-  // Countdown timer
-  const [timeRemaining, setTimeRemaining] = useState(estimatedWaitMinutes * 60);
+  // Get event name for display
+  const myEventName = myEntry?.eventId 
+    ? availableEvents.find(e => e.id === myEntry.eventId)?.name || 'Event'
+    : 'Event';
+  
+  // Get the full event object for the current entry
+  const myEvent = myEntry?.eventId 
+    ? availableEvents.find(e => e.id === myEntry.eventId)
+    : null;
+  
+  // Check if current entry is a table-based reservation
+  const isTableBasedReservation = myEntry?.type === 'reservation' && myEvent?.type === 'table-based';
+  
+  // Get queue name for display (if applicable)
+  const myQueueName = myEntry?.queueId 
+    ? (() => {
+        const event = availableEvents.find(e => e.id === myEntry.eventId);
+        if (event && event.type === 'capacity-based') {
+          const capacityEvent = event as CapacityBasedEvent;
+          const queue = capacityEvent.queues?.find(q => q.id === myEntry.queueId);
+          return queue?.name;
+        }
+        return undefined;
+      })()
+    : undefined;
+  
+  // Full display name with queue if applicable
+  const displayName = myQueueName ? `${myQueueName} - ${myEventName}` : myEventName;
 
-  useEffect(() => {
-    if (myEntry?.type === 'waitlist') {
-      setTimeRemaining(estimatedWaitMinutes * 60);
-    }
-  }, [myEntry?.id, myEntry?.type, estimatedWaitMinutes]);
-
-  useEffect(() => {
-    if (isOnWaitlist) {
-      const interval = setInterval(() => {
-        setTimeRemaining((prev) => {
-          if (prev <= 0) return 0;
-          return prev - 1;
-        });
-      }, 1000);
-
-      return () => clearInterval(interval);
-    }
-  }, [isOnWaitlist]);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
+  // Handler functions
   const handleFindEvent = () => {
-    const trimmedCode = eventCode.trim().toLowerCase();
+    if (!eventCode.trim()) {
+      toast.error('Please enter an event code or name');
+      return;
+    }
+
     const event = availableEvents.find(e => 
-      e.name.toLowerCase().includes(trimmedCode) || 
-      e.id.toLowerCase() === trimmedCode
+      e.code?.toLowerCase() === eventCode.toLowerCase() || 
+      e.name.toLowerCase().includes(eventCode.toLowerCase())
     );
-    
+
     if (event) {
       setSelectedEvent(event);
-      toast.success(`Event found: ${event.name}`);
-      // Determine next screen based on event type
+      toast.success(`Selected: ${event.name}`);
       if (event.type === 'table-based') {
-        setJoinType('choice'); // Will show reservation vs waitlist choice
+        setJoinType('choice');
       } else {
-        setJoinType('waitlist'); // Capacity-based only has waitlist
+        const capacityEvent = event as CapacityBasedEvent;
+        if (capacityEvent.queueMode === 'multiple' && capacityEvent.queues && capacityEvent.queues.length > 0) {
+          setJoinType('queue-selection');
+        } else {
+          setJoinType('waitlist');
+        }
       }
     } else {
       toast.error('Event not found. Please check the code and try again.');
     }
   };
 
-  const handleScanSuccess = (eventData: string) => {
+  const handleScanSuccess = (data: string) => {
     setShowScanner(false);
-    // Try to find event from QR code data
-    const event = availableEvents.find(e => e.id === eventData || e.name === eventData);
-    if (event) {
-      setSelectedEvent(event);
-      if (event.type === 'table-based') {
-        setJoinType('choice');
+    
+    try {
+      // Try to parse as JSON (new format with queue info)
+      const parsed = JSON.parse(data);
+      
+      if (parsed.type === 'waitlist-event' && parsed.eventId) {
+        const event = availableEvents.find(e => e.id === parsed.eventId || e.code === parsed.eventCode);
+        
+        if (event) {
+          setSelectedEvent(event);
+          setEventCode(parsed.eventCode || event.code || '');
+          
+          // Check if this is a queue-specific QR code
+          if (parsed.queueId && parsed.queueName) {
+            // Direct queue assignment
+            const capacityEvent = event as CapacityBasedEvent;
+            const queue = capacityEvent.queues?.find(q => q.id === parsed.queueId);
+            
+            if (queue) {
+              setSelectedQueue(queue);
+              toast.success(`Found: ${parsed.queueName} - ${event.name}`);
+              setJoinType('waitlist'); // Go straight to join form
+            } else {
+              toast.error('Queue not found.');
+              setJoinType('event-selection');
+            }
+          } else {
+            // Event-level QR code
+            toast.success(`Found event: ${event.name}`);
+            if (event.type === 'table-based') {
+              setJoinType('choice');
+            } else {
+              const capacityEvent = event as CapacityBasedEvent;
+              if (capacityEvent.queueMode === 'multiple' && capacityEvent.queues && capacityEvent.queues.length > 0) {
+                setJoinType('queue-selection');
+              } else {
+                setJoinType('waitlist');
+              }
+            }
+          }
+        } else {
+          toast.error('Event not found. Please try again.');
+          setJoinType('event-selection');
+        }
       } else {
-        setJoinType('waitlist');
+        throw new Error('Invalid QR code format');
       }
-      toast.success(`Scanned: ${event.name}`);
-    } else {
-      toast.error('Invalid QR code');
+    } catch (e) {
+      // Fallback: treat as plain event code
+      const event = availableEvents.find(e => e.code === data || e.id === data);
+      
+      if (event) {
+        setSelectedEvent(event);
+        setEventCode(data);
+        toast.success(`Found event: ${event.name}`);
+        if (event.type === 'table-based') {
+          setJoinType('choice');
+        } else {
+          const capacityEvent = event as CapacityBasedEvent;
+          if (capacityEvent.queueMode === 'multiple' && capacityEvent.queues && capacityEvent.queues.length > 0) {
+            setJoinType('queue-selection');
+          } else {
+            setJoinType('waitlist');
+          }
+        }
+      } else {
+        toast.error('Invalid QR code. Event not found.');
+        setJoinType('event-selection');
+      }
     }
   };
 
@@ -191,92 +273,186 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
       toast.error('Please enter your name');
       return;
     }
-    
+
     if (!selectedEvent) {
-      toast.error('Please select an event first');
+      toast.error('No event selected');
       return;
     }
 
-    const id = addToWaitlist(
-      guestName, 
+    // Create reservation time as a Date object in local timezone
+    let reservationDateTime: Date | undefined = undefined;
+    if (reservationTime) {
+      const today = new Date();
+      const [hours, minutes] = reservationTime.split(':');
+      reservationDateTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), parseInt(hours), parseInt(minutes));
+    }
+
+    const newId = addToWaitlist(
+      guestName.trim(), 
       partySize, 
-      specialRequests.trim() || undefined, 
-      joinType === 'reservation' ? 'reservation' : 'waitlist',
-      selectedEvent.id
+      specialRequests.trim() || undefined,
+      joinType as 'reservation' | 'waitlist',
+      selectedEvent.id,
+      selectedQueue?.id,
+      reservationDateTime
     );
     
-    // Save the ID so user can view status (supports multiple entries)
-    setMyWaitlistIds((prev) => [...new Set([...prev, id])]);
-    setActiveWaitlistId(id);
+    setMyWaitlistIds([...myWaitlistIds, newId]);
+    setSelectedWaitlistId(newId);
+    setViewingStatus(true);
     
-    setIsSyncing(true);
-    const message = joinType === 'reservation' 
-      ? 'Reservation confirmed! You will be seated shortly.' 
-      : `Successfully joined ${selectedEvent.name}!`;
-    toast.success(message);
-    
-    // Reset form
+    toast.success(
+      joinType === 'reservation' 
+        ? 'Reservation confirmed!' 
+        : 'Added to waitlist!'
+    );
+
     setGuestName('');
     setPartySize(2);
     setSpecialRequests('');
-    setSelectedEvent(null);
-    setEventCode('');
+    setReservationTime('');
     setJoinType('choice');
-    
-    setTimeout(() => setIsSyncing(false), 1500);
+    setSelectedEvent(null);
+    setSelectedQueue(null);
   };
 
   const handleAddAnother = () => {
     if (!guestName.trim()) {
-      toast.error('Please enter guest name');
+      toast.error('Please enter a name');
       return;
     }
-    addToWaitlist(guestName, partySize, specialRequests.trim() || undefined, 'waitlist', myEntry?.eventId);
-    setIsSyncing(true);
-    toast.success(`${guestName} added to the waitlist!`);
-    // Reset form
-    setGuestName('');
-    setPartySize(2);
-    setSpecialRequests('');
-    setShowAddAnotherForm(false);
-    setTimeout(() => setIsSyncing(false), 1500);
+
+    if (!myEntry) {
+      toast.error('No active waitlist');
+      return;
+    }
+
+    // Check if we're editing a table-based reservation
+    if (isTableBasedReservation && selectedWaitlistId) {
+      // Update existing reservation
+      let reservationDateTime: Date | undefined = undefined;
+      if (reservationTime) {
+        const today = new Date();
+        const [hours, minutes] = reservationTime.split(':');
+        reservationDateTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), parseInt(hours), parseInt(minutes));
+      }
+
+      updateWaitlistEntry(selectedWaitlistId, {
+        name: guestName.trim(),
+        partySize,
+        specialRequests: specialRequests.trim() || undefined,
+        reservationTime: reservationDateTime,
+      });
+
+      toast.success('Reservation updated!');
+      setShowAddAnotherForm(false);
+      setGuestName('');
+      setPartySize(2);
+      setSpecialRequests('');
+      setReservationTime('');
+    } else {
+      // Add new guest to waitlist
+      const newId = addToWaitlist(
+        guestName.trim(), 
+        partySize, 
+        specialRequests.trim() || undefined,
+        myEntry.type,
+        myEntry.eventId,
+        myEntry.queueId
+      );
+      
+      setMyWaitlistIds([...myWaitlistIds, newId]);
+      toast.success(`Added ${guestName} to the waitlist!`);
+      
+      setShowAddAnotherForm(false);
+      setGuestName('');
+      setPartySize(2);
+      setSpecialRequests('');
+    }
   };
 
   const handleLeaveWaitlist = () => {
-    if (myEntry) {
-      const entryType = myEntry?.type;
-      removeFromWaitlist(myEntry.id);
-      setMyWaitlistIds((prev) => prev.filter((id) => id !== myEntry.id));
-      setActiveWaitlistId((prev) => (prev === myEntry.id ? null : prev));
-      setViewingStatus(false);
-      setIsSyncing(true);
-      const message = entryType === 'reservation' ? 'Reservation cancelled' : 'Removed from waitlist';
-      toast.success(message);
-      setTimeout(() => setIsSyncing(false), 1500);
-    }
+    if (!selectedWaitlistId) return;
+    
+    removeFromWaitlist(selectedWaitlistId);
+    setMyWaitlistIds(myWaitlistIds.filter(id => id !== selectedWaitlistId));
+    setViewingStatus(false);
+    setSelectedWaitlistId(null);
+    
+    toast.success(
+      myEntry?.type === 'reservation'
+        ? 'Reservation cancelled'
+        : 'Removed from waitlist'
+    );
   };
-
-  // Get event name for display
-  const myEventName = myEntry?.eventId 
-    ? availableEvents.find(e => e.id === myEntry.eventId)?.name || 'Event'
-    : 'Event';
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 flex flex-col max-w-md mx-auto">
       <StatusBar isOnline={isOnline} isSyncing={isSyncing} />
       
       <div className="bg-white shadow-sm p-4 flex items-center justify-between">
-        <div>
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+        <div className="flex-1 text-center">
           <h1 className="text-xl font-semibold">Waitlist</h1>
           <p className="text-xs text-gray-500">Guest View</p>
         </div>
-        <button
-          onClick={onLogout}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-        >
-          <LogOut className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          
+          <button
+            onClick={onLogout}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Logout"
+          >
+            
+          </button>
+        </div>
       </div>
+
+      {menuOpen && (
+        <div className="bg-white border-b border-gray-200 shadow-lg">
+          <button
+            onClick={() => {
+              setShowMyEvents(true);
+              setMenuOpen(false);
+            }}
+            className="w-full p-4 text-left hover:bg-gray-100 transition-colors"
+          >
+            <div className="flex items-center justify-between">
+              <div className="font-semibold">My Events</div>
+              {myWaitlistIds.length > 0 && (
+                <span className="bg-blue-600 text-white text-xs font-bold px-2 py-1 rounded-full">
+                  {myWaitlistIds.length}
+                </span>
+              )}
+            </div>
+          </button>
+          <button
+            onClick={() => {
+              setShowProfile(true);
+              setMenuOpen(false);
+            }}
+            className="w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200"
+          >
+            <div className="font-semibold">Profile</div>
+            
+          </button>
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              onLogout();
+            }}
+            className="w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200 text-red-600"
+          >
+            <div className="font-semibold">Logout</div>
+            
+          </button>
+        </div>
+      )}
 
       {!isOnWaitlist || !viewingStatus ? (
         <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -341,7 +517,15 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                             if (event.type === 'table-based') {
                               setJoinType('choice');
                             } else {
-                              setJoinType('waitlist');
+                              // Capacity-based event
+                              const capacityEvent = event as CapacityBasedEvent;
+                              if (capacityEvent.queueMode === 'multiple' && capacityEvent.queues && capacityEvent.queues.length > 0) {
+                                // Multiple queues - show queue selection
+                                setJoinType('queue-selection');
+                              } else {
+                                // Single queue - go directly to waitlist form
+                                setJoinType('waitlist');
+                              }
                             }
                           }}
                           className="w-full text-left p-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
@@ -396,20 +580,97 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                   <span className="text-sm opacity-90">Enter code or scan QR</span>
                 </button>
 
-                {isOnWaitlist && (
+                {myWaitlistIds.length > 0 && (
                   <button
-                    onClick={() => {
-                      if (!activeWaitlistId && myEntries[0]) {
-                        setActiveWaitlistId(myEntries[0].id);
-                      }
-                      setViewingStatus(true);
-                    }}
+                    onClick={() => setShowMyEvents(true)}
                     className="w-full bg-green-600 hover:bg-green-700 text-white py-4 px-6 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-transform"
                   >
-                    <Clock className="w-6 h-6" />
-                    View My Status ({myEntries.length})
+                    <Ticket className="w-6 h-6" />
+                    View My Events ({myWaitlistIds.length})
                   </button>
                 )}
+
+                <button
+                  onClick={() => setIsOnline(!isOnline)}
+                  className="w-full text-xs text-gray-500 py-2"
+                >
+                  Toggle {isOnline ? 'Offline' : 'Online'} Mode
+                </button>
+              </>
+            )}
+
+            {/* Queue Selection Screen (Multiple-queue capacity events only) */}
+            {joinType === 'queue-selection' && selectedEvent && selectedEvent.type === 'capacity-based' && (
+              <>
+                <div className="text-center mb-8">
+                  <button
+                    onClick={() => {
+                      setSelectedEvent(null);
+                      setSelectedQueue(null);
+                      setJoinType('event-selection');
+                    }}
+                    className="text-blue-600 hover:text-blue-700 text-sm mb-4 flex items-center gap-1 mx-auto"
+                  >
+                    ← Change event
+                  </button>
+                  <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <ListOrdered className="w-10 h-10 text-blue-600" />
+                  </div>
+                  <h2 className="text-2xl font-semibold mb-2">{selectedEvent.name}</h2>
+                  <p className="text-gray-600 text-sm">
+                    Select which queue to join
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
+                  <h3 className="text-sm font-medium text-gray-700 mb-3">Available Queues</h3>
+                  <div className="space-y-3">
+                    {(selectedEvent as CapacityBasedEvent).queues?.map(queue => {
+                      // Calculate live count from waitlist entries
+                      const liveCount = allWaitlistEntries.filter(e => 
+                        e.eventId === selectedEvent.id && e.queueId === queue.id
+                      ).length;
+                      const queuePercentage = (liveCount / queue.capacity) * 100;
+                      const getQueueColor = () => {
+                        if (queuePercentage < 50) return 'text-green-600';
+                        if (queuePercentage < 80) return 'text-amber-600';
+                        return 'text-red-600';
+                      };
+
+                      return (
+                        <button
+                          key={queue.id}
+                          onClick={() => {
+                            setSelectedQueue(queue);
+                            setJoinType('waitlist');
+                            toast.success(`Selected: ${queue.name}`);
+                          }}
+                          className="w-full text-left p-4 border-2 border-gray-200 rounded-xl hover:bg-blue-50 hover:border-blue-400 transition-all"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="font-semibold text-lg">{queue.name}</div>
+                            <div className={`text-sm font-medium ${getQueueColor()}`}>
+                              {Math.round(queuePercentage)}%
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                            <Users className="w-4 h-4" />
+                            <span>{liveCount} / {queue.capacity} in queue</span>
+                          </div>
+                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all ${
+                                queuePercentage < 50 ? 'bg-green-500' :
+                                queuePercentage < 80 ? 'bg-amber-500' : 'bg-red-500'
+                              }`}
+                              style={{ width: `${Math.min(queuePercentage, 100)}%` }}
+                            />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 <button
                   onClick={() => setIsOnline(!isOnline)}
@@ -532,6 +793,23 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                     </select>
                   </div>
 
+                  {joinType === 'reservation' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Reservation Time <span className="text-gray-400 font-normal">(Optional)</span>
+                      </label>
+                      <div className="relative">
+                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <input
+                          type="time"
+                          value={reservationTime}
+                          onChange={(e) => setReservationTime(e.target.value)}
+                          className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Special Requests <span className="text-gray-400 font-normal">(Optional)</span>
@@ -576,6 +854,59 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
               >
                 ← Back to menu
               </button>
+
+              {/* Event Switcher Dropdown - only show if user has multiple events */}
+              {myWaitlistIds.length > 1 && (
+                <div className="mb-6">
+                  <label className="block text-xs text-gray-500 mb-2">Switch Event</label>
+                  <select
+                    value={selectedWaitlistId || ''}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setSelectedWaitlistId(newId);
+                      const entry = allWaitlistEntries.find(entry => entry.id === newId);
+                      const event = availableEvents.find(ev => ev.id === entry?.eventId);
+                      toast.success(`Switched to ${event?.name || 'event'}`);
+                    }}
+                    className="w-full p-3 border-2 border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                  >
+                    {myWaitlistIds.map((id) => {
+                      const entry = allWaitlistEntries.find(e => e.id === id);
+                      if (!entry) return null;
+                      
+                      const event = availableEvents.find(e => e.id === entry.eventId);
+                      const eventName = event?.name || 'Unknown Event';
+                      
+                      // Get queue name if applicable
+                      const queueName = entry.queueId 
+                        ? (() => {
+                            if (event && event.type === 'capacity-based') {
+                              const capacityEvent = event as CapacityBasedEvent;
+                              const queue = capacityEvent.queues?.find(q => q.id === entry.queueId);
+                              return queue?.name;
+                            }
+                            return undefined;
+                          })()
+                        : undefined;
+                      
+                      const fullDisplayName = queueName ? `${queueName} - ${eventName}` : eventName;
+                      
+                      // Calculate position
+                      const sameTypeEntries = allWaitlistEntries.filter(e => 
+                        e.type === entry.type && e.eventId === entry.eventId
+                      );
+                      const pos = sameTypeEntries.findIndex(e => e.id === id) + 1;
+                      
+                      return (
+                        <option key={id} value={id}>
+                          {fullDisplayName} - {entry.name} {entry.type === 'waitlist' ? `(#${pos})` : entry.reservationTime ? `(${entry.reservationTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '(Reservation)'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+
               <div className={`w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-6 ${
                 myEntry?.type === 'reservation' ? 'bg-green-100' : 'bg-blue-100'
               }`}>
@@ -590,33 +921,29 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
               <h2 className="text-3xl font-bold mb-2">
                 {myEntry?.type === 'reservation' ? 'Your Reservation' : 'Your Position'}
               </h2>
-              <p className="text-sm text-gray-500 mb-1">{myEventName}</p>
+              
+              {myEntry?.type === 'reservation' && myEntry?.reservationTime && (
+                <div className="mb-2">
+                  <div className="inline-flex items-center gap-2 bg-green-100 px-4 py-2 rounded-lg">
+                    <Clock className="w-5 h-5 text-green-700" />
+                    <span className="text-xl font-bold text-green-700">
+                      {myEntry.reservationTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+              )}
+              
               <p className="text-gray-600">
                 {myEntry?.type === 'reservation' 
                   ? 'You will be seated shortly'
                   : position === 1
                     ? "You're next!"
-                    : `${position - 1} ${position - 1 === 1 ? 'party' : 'parties'} ahead of you`
+                    : estimatedWaitMinutes === 0
+                      ? "Almost there!"
+                      : `${position - 1} ${position - 1 === 1 ? 'party' : 'parties'} ahead of you`
                 }
               </p>
             </div>
-
-            {myEntries.length > 1 && (
-              <div className="bg-white rounded-2xl p-4 shadow border border-gray-200">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Select Entry</label>
-                <select
-                  value={myEntry?.id ?? ''}
-                  onChange={(e) => setActiveWaitlistId(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg bg-white"
-                >
-                  {myEntries.map((entry, idx) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.name} • {entry.type === 'reservation' ? 'Reservation' : 'Waitlist'} • #{idx + 1}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
 
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 space-y-4">
               {myEntry?.type === 'waitlist' && (
@@ -625,13 +952,25 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                     <Clock className="w-6 h-6 text-blue-600" />
                     <span className="font-medium">Estimated Wait</span>
                   </div>
-                  <div className="text-2xl font-bold text-blue-600 tabular-nums">
-                    {formatTime(timeRemaining)}
+                  <div className="text-2xl font-bold text-blue-600">
+                    ~{estimatedWaitMinutes} min
                   </div>
                 </div>
               )}
               
-              <div className={myEntry?.type === 'waitlist' ? 'pt-0' : ''}>
+              {myEntry?.type === 'reservation' && myEntry?.reservationTime && (
+                <div className="flex items-center justify-between pb-4 border-b border-gray-200">
+                  <div className="flex items-center gap-3">
+                    <Clock className="w-6 h-6 text-green-600" />
+                    <span className="font-medium">Reservation Time</span>
+                  </div>
+                  <div className="text-2xl font-bold text-green-600">
+                    {myEntry.reservationTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </div>
+                </div>
+              )}
+              
+              <div className={myEntry?.type === 'waitlist' || (myEntry?.type === 'reservation' && myEntry?.reservationTime) ? 'pt-0' : ''}>
                 <div className="flex items-center justify-between text-sm mb-3">
                   <span className="text-gray-600">Guest Name</span>
                   <span className="font-semibold">{myEntry?.name}</span>
@@ -663,11 +1002,35 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
             </div>
 
             <button
-              onClick={() => setShowAddAnotherForm(true)}
+              onClick={() => {
+                // Pre-fill form with current reservation data if editing a reservation
+                if (isTableBasedReservation && myEntry) {
+                  setGuestName(myEntry.name);
+                  setPartySize(myEntry.partySize);
+                  setSpecialRequests(myEntry.specialRequests || '');
+                  if (myEntry.reservationTime) {
+                    const hours = myEntry.reservationTime.getHours().toString().padStart(2, '0');
+                    const minutes = myEntry.reservationTime.getMinutes().toString().padStart(2, '0');
+                    setReservationTime(`${hours}:${minutes}`);
+                  } else {
+                    setReservationTime('');
+                  }
+                }
+                setShowAddAnotherForm(true);
+              }}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 px-6 rounded-xl font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform"
             >
-              <Users className="w-5 h-5" />
-              Add Another Guest
+              {isTableBasedReservation ? (
+                <>
+                  <Calendar className="w-5 h-5" />
+                  Edit Reservation
+                </>
+              ) : (
+                <>
+                  <Users className="w-5 h-5" />
+                  Add Another Guest
+                </>
+              )}
             </button>
 
             <button
@@ -687,6 +1050,163 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
         </div>
       )}
 
+      {showProfile && (
+        <Profile
+          user={user}
+          onClose={() => setShowProfile(false)}
+          onLogout={onLogout}
+        />
+      )}
+
+      {showMyEvents && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-2xl">
+              <h2 className="text-2xl font-bold text-gray-800">My Events</h2>
+              <button
+                onClick={() => setShowMyEvents(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {myWaitlistIds.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Ticket className="w-10 h-10 text-gray-400" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-800 mb-2">No Active Events</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    You're not currently on any waitlists
+                  </p>
+                  <button
+                    onClick={() => {
+                      setShowMyEvents(false);
+                      setJoinType('event-selection');
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold"
+                  >
+                    Join an Event
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-600 mb-4">
+                    You're currently on {myWaitlistIds.length} {myWaitlistIds.length === 1 ? 'waitlist' : 'waitlists'}
+                  </p>
+                  {myWaitlistIds.map((id) => {
+                    const entry = allWaitlistEntries.find(e => e.id === id);
+                    if (!entry) return null; // Entry was removed
+
+                    const event = availableEvents.find(e => e.id === entry.eventId);
+                    const eventName = event?.name || 'Unknown Event';
+                    
+                    // Get queue name if applicable
+                    const queueName = entry.queueId 
+                      ? (() => {
+                          if (event && event.type === 'capacity-based') {
+                            const capacityEvent = event as CapacityBasedEvent;
+                            const queue = capacityEvent.queues?.find(q => q.id === entry.queueId);
+                            return queue?.name;
+                          }
+                          return undefined;
+                        })()
+                      : undefined;
+                    
+                    const fullDisplayName = queueName ? `${queueName} - ${eventName}` : eventName;
+                    
+                    // Calculate position for this entry
+                    const sameTypeEntries = allWaitlistEntries.filter(e => 
+                      e.type === entry.type && e.eventId === entry.eventId
+                    );
+                    const pos = sameTypeEntries.findIndex(e => e.id === id) + 1;
+                    
+                    // Calculate dynamic wait time
+                    const dynamicWaitTime = calculateDynamicWaitTime(entry, allWaitlistEntries);
+                    
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => {
+                          setSelectedWaitlistId(id);
+                          setViewingStatus(true);
+                          setShowMyEvents(false);
+                        }}
+                        className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all text-left"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <h3 className="font-semibold text-lg text-gray-800">{fullDisplayName}</h3>
+                            <p className="text-sm text-gray-600">{entry.name}</p>
+                          </div>
+                          {entry.type === 'reservation' ? (
+                            <div className="bg-green-100 text-green-700 text-xs font-semibold px-2 py-1 rounded">
+                              Reservation
+                            </div>
+                          ) : (
+                            <div className="bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-1 rounded">
+                              Waitlist
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center gap-4 text-sm text-gray-600">
+                          {entry.type === 'waitlist' && (
+                            <div className="flex items-center gap-1">
+                              <ListOrdered className="w-4 h-4" />
+                              <span>Position #{pos}</span>
+                            </div>
+                          )}
+                          {entry.type === 'reservation' && entry.reservationTime && (
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-4 h-4 text-green-600" />
+                              <span className="font-semibold text-green-700">
+                                {entry.reservationTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <Users className="w-4 h-4" />
+                            <span>{entry.partySize} {entry.partySize === 1 ? 'person' : 'people'}</span>
+                          </div>
+                          {entry.type === 'waitlist' && dynamicWaitTime > 0 && (
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-4 h-4" />
+                              <span>~{dynamicWaitTime} min</span>
+                            </div>
+                          )}
+                        </div>
+                        
+                        {entry.specialRequests && (
+                          <div className="mt-2 pt-2 border-t border-gray-200">
+                            <p className="text-xs text-gray-500">Note: {entry.specialRequests}</p>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  <div className="pt-4 border-t border-gray-200">
+                    <button
+                      onClick={() => {
+                        setShowMyEvents(false);
+                        setJoinType('event-selection');
+                      }}
+                      className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white py-3 px-6 rounded-xl font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+                    >
+                      <Ticket className="w-5 h-5" />
+                      Join Another Event
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showScanner && (
         <QRScanner
           onScan={handleScanSuccess}
@@ -698,13 +1218,16 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-semibold">Add Another Guest</h3>
+              <h3 className="text-xl font-semibold">
+                {isTableBasedReservation ? 'Edit Reservation' : 'Add Another Guest'}
+              </h3>
               <button
                 onClick={() => {
                   setShowAddAnotherForm(false);
                   setGuestName('');
                   setPartySize(2);
                   setSpecialRequests('');
+                  setReservationTime('');
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -715,13 +1238,13 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Guest Name
+                  {isTableBasedReservation ? 'Your Name' : 'Guest Name'}
                 </label>
                 <input
                   type="text"
                   value={guestName}
                   onChange={(e) => setGuestName(e.target.value)}
-                  placeholder="Enter guest name"
+                  placeholder={isTableBasedReservation ? 'Enter your name' : 'Enter guest name'}
                   className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -742,6 +1265,23 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                   ))}
                 </select>
               </div>
+
+              {isTableBasedReservation && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Reservation Time <span className="text-gray-400 font-normal">(Optional)</span>
+                  </label>
+                  <div className="relative">
+                    <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <input
+                      type="time"
+                      value={reservationTime}
+                      onChange={(e) => setReservationTime(e.target.value)}
+                      className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -767,6 +1307,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                   setGuestName('');
                   setPartySize(2);
                   setSpecialRequests('');
+                  setReservationTime('');
                 }}
                 className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-3 px-4 rounded-lg font-semibold active:scale-95 transition-transform"
               >
@@ -776,7 +1317,7 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                 onClick={handleAddAnother}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg font-semibold active:scale-95 transition-transform"
               >
-                Add to Waitlist
+                {isTableBasedReservation ? 'Save Changes' : 'Add to Waitlist'}
               </button>
             </div>
           </div>

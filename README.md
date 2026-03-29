@@ -1,10 +1,11 @@
 # Waitlist Management Boilerplates
 
-This repository now includes separate frontend and backend boilerplates:
+This repository now includes separate frontend and backend app folders plus multiple Figma export snapshots:
 
-- `Figma/` - untouched Figma-exported source snapshot
-- `frontend/` - runnable frontend app scaffold based on the Figma source
-- `backend/` - API boilerplate aligned with the waitlist API contract
+- `Figma/` - earlier untouched Figma-exported source snapshot
+- `Figma phase 4/` - phase 4 Figma export referenced for the active buildout
+- `frontend/` - runnable web app scaffold now wired end-to-end to the backend
+- `backend/` - API implementation for auth, events, waitlist, and staff operations
 
 ## Frontend
 
@@ -27,21 +28,40 @@ npm install
 npm run dev
 ```
 
-The backend exposes `http://localhost:8000/v1` with boilerplate routes for:
+Set optional env vars in `backend/.env`:
 
-- Auth (`/auth/login`)
+- `PORT` (default: `8000`)
+- `CORS_ALLOWED_ORIGINS` (comma-separated allowlist; defaults to localhost Vite origins)
+- `ACCESS_TOKEN_TTL_MS`
+- `REFRESH_TOKEN_TTL_MS`
+- `RATE_LIMIT_WINDOW_MS`
+- `RATE_LIMIT_MAX_REQUESTS`
+
+The backend exposes `http://localhost:8000/v1` with routes for:
+
+- Auth (`/auth/login`, `/auth/signup/*`, `/auth/me`, `/auth/refresh`, `/auth/logout`)
 - Events (`/events`)
 - Waitlist (`/events/:eventId/waitlist`)
-- Staff (`/events/:eventId/staff/dashboard`, `/staff/promote`, `/staff/seat`)
+- Staff (`/events/:eventId/staff/dashboard`, `/staff/promote`, `/staff/seat`, `/staff/clear-table`)
 - Sync (`/sync`)
 
-## Supabase (Option A)
+## Demo Accounts
 
-If you want Supabase persistence while keeping this frontend/backend architecture, follow:
+- Staff: `admin@demo.com` / `password123`
+- Guest: `guest@demo.com` / `password123`
 
-- `SUPABASE_OPTION_A_SETUP.md`
+## Security Notes
 
-The backend now includes a Supabase client scaffold at `backend/src/lib/supabase.ts` and exposes `/health` status showing `supabaseConfigured`.
+The current prototype now includes:
+
+- hashed passwords
+- expiring access and refresh tokens
+- strict CORS allowlists
+- RBAC and IDOR protections on event/waitlist access
+- request rate limiting
+- defensive security headers
+
+`#SPEC GAP`: the spec explicitly calls for bcrypt/JWT, but this repo currently uses Node built-in `scrypt` plus opaque in-memory tokens because package installation is blocked in this execution environment.
 
 ## Production Readiness
 

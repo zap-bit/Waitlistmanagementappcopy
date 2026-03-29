@@ -15,6 +15,7 @@ export interface WaitlistEntry {
   estimatedWait: number;
   specialRequests?: string;
   joinedAt: string;
+  createdByUserId: string;
 }
 
 export interface Table {
@@ -71,4 +72,14 @@ export interface BusinessModel {
   id: string;
   name: string;
   ownerId: string;
+}
+
+export interface AccessSession {
+  userId: string;
+  expiresAt: number;
+}
+
+export interface RefreshSession {
+  userId: string;
+  expiresAt: number;
 }
