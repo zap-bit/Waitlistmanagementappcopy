@@ -1,3 +1,29 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+function loadDotEnvIfPresent() {
+  const envPath = resolve(process.cwd(), '.env');
+  if (!existsSync(envPath)) return;
+
+  const lines = readFileSync(envPath, 'utf8').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const equalIndex = line.indexOf('=');
+    if (equalIndex <= 0) continue;
+
+    const key = line.slice(0, equalIndex).trim();
+    const value = line.slice(equalIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadDotEnvIfPresent();
+
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
 
 function parsePositiveNumber(value: string | undefined, fallback: number): number {
