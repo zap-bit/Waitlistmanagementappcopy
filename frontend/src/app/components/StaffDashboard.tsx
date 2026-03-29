@@ -8,9 +8,10 @@ import { QRCodeModal } from './QRCodeModal';
 import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2, User as UserIcon, QrCode, Archive, ArchiveRestore } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
-import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent } from '../utils/events';
-import { getStoredUser, User } from '../utils/auth';
+import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent, syncEventsFromApi } from '../utils/events';
+import { User } from '../utils/auth';
 import { Profile } from './Profile';
+import { apiClient } from '../../api/client';
 
 interface Attraction {
   id: string;
@@ -32,33 +33,9 @@ interface StaffDashboardProps {
   user: User;
 }
 
-const getStoredNumber = (key: string, defaultValue: number): number => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(`Error loading ${key} from localStorage:`, e);
-      }
-    }
-  }
-  return defaultValue;
-};
+const getStoredNumber = (_key: string, defaultValue: number): number => defaultValue;
 
-const getStoredBoolean = (key: string, defaultValue: boolean): boolean => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(`Error loading ${key} from localStorage:`, e);
-      }
-    }
-  }
-  return defaultValue;
-};
+const getStoredBoolean = (_key: string, defaultValue: boolean): boolean => defaultValue;
 
 const calculateWaitTime = (queueSize: number, throughput: number): number => {
   if (throughput === 0) return 0;
@@ -66,25 +43,9 @@ const calculateWaitTime = (queueSize: number, throughput: number): number => {
 };
 
 // Helper functions to save/load tables per event
-const saveEventTables = (eventId: string, tables: Table[]) => {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(`tables_${eventId}`, JSON.stringify(tables));
-  }
-};
+const saveEventTables = (_eventId: string, _tables: Table[]) => {};
 
-const loadEventTables = (eventId: string): Table[] | null => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(`tables_${eventId}`);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(`Error loading tables for event ${eventId}:`, e);
-      }
-    }
-  }
-  return null;
-};
+const loadEventTables = (_eventId: string): Table[] | null => null;
 
 export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables, user }: StaffDashboardProps) {
   const [currentCapacity, setCurrentCapacity] = useState(() => getStoredNumber('currentCapacity', 45));
@@ -112,10 +73,14 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
 
   // Filter events by businessId on mount and refresh
   useEffect(() => {
-    const activeEvents = getActiveEvents().filter(e => e.businessId === user.businessId);
-    const archived = getArchivedEvents().filter(e => e.businessId === user.businessId);
-    setEvents(activeEvents);
-    setArchivedEvents(archived);
+    const refreshEvents = async () => {
+      await syncEventsFromApi();
+      const activeEvents = getActiveEvents().filter(e => e.businessId === user.businessId);
+      const archived = getArchivedEvents().filter(e => e.businessId === user.businessId);
+      setEvents(activeEvents);
+      setArchivedEvents(archived);
+    };
+    void refreshEvents();
   }, [user.businessId]);
 
   // Refresh events when navigating to home or archived pages
@@ -167,33 +132,35 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   }, [selectedEvent]);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('currentCapacity', JSON.stringify(currentCapacity));
-    }
-  }, [currentCapacity]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('totalTables', JSON.stringify(totalTables));
-    }
-  }, [totalTables]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('maxCapacity', JSON.stringify(maxCapacity));
-    }
-  }, [maxCapacity]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('isOnline', JSON.stringify(isOnline));
-    }
-  }, [isOnline]);
+  useEffect(() => {}, [currentCapacity, totalTables, maxCapacity, isOnline]);
 
   const simulateSync = () => {
     setIsSyncing(true);
     setTimeout(() => setIsSyncing(false), 1000);
+  };
+
+  const refreshSelectedEventState = async (eventId?: string) => {
+    const targetEventId = eventId || selectedEvent?.id;
+    if (!targetEventId) return;
+    const dashboard = await apiClient.getDashboard(targetEventId);
+    setWaitlist(
+      dashboard.waitlist.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        partySize: entry.partySize,
+        joinedAt: new Date(entry.joinedAt),
+        estimatedWait: entry.estimatedWait,
+        specialRequests: entry.specialRequests,
+        type: entry.type,
+        eventId: entry.eventId,
+      }))
+    );
+    setTables(
+      dashboard.tables.map((table) => ({
+        ...table,
+        seatedAt: table.seatedAt ? new Date(table.seatedAt) : undefined,
+      }))
+    );
   };
 
   const handleDecreaseCapacity = () => {
@@ -210,90 +177,39 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
-  const handlePromote = (id: string) => {
-    const entry = waitlist.find((e) => e.id === id);
-    if (!entry) return;
-
-    const availableTable = tables.find(
-      (t) => !t.occupied && t.capacity >= entry.partySize
-    );
-
-    if (availableTable) {
-      const updatedTables = tables.map((t) =>
-        t.id === availableTable.id
-          ? {
-              ...t,
-              occupied: true,
-              guestName: entry.name,
-              partySize: entry.partySize,
-              seatedAt: new Date(),
-            }
-          : t
-      );
-      
-      setTables(updatedTables);
-      setWaitlist(waitlist.filter((e) => e.id !== id));
-      
-      // Update event's currentFilledTables count
-      if (selectedEvent && selectedEvent.type === 'table-based') {
-        const filledCount = updatedTables.filter(t => t.occupied).length;
-        updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
-        setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
-        setEvents(getStoredEvents());
-        saveEventTables(selectedEvent.id, updatedTables);
-      }
-      
-      toast.success(`${entry.name} seated at ${availableTable.name}`, {
-        description: `Party of ${entry.partySize}`,
-      });
-      simulateSync();
-    } else {
-      toast.error('No available tables for this party size', {
-        description: `Need table for ${entry.partySize} guests`,
-      });
+  const handlePromote = async (id: string) => {
+    if (!selectedEvent) {
+      toast.error('Select an event first');
+      return;
     }
+    await apiClient.promoteWaitlistEntry(selectedEvent.id, id);
+    await refreshSelectedEventState(selectedEvent.id);
+    simulateSync();
   };
 
-  const handleSeatAll = () => {
+  const handleSeatAll = async () => {
+    if (!selectedEvent) {
+      toast.error('Select an event first');
+      return;
+    }
     const reservations = waitlist.filter((e) => e.type === 'reservation');
     if (reservations.length === 0) return;
 
     let seatedCount = 0;
     const newTables = [...tables];
-    const newWaitlist = [...waitlist];
-
-    reservations.forEach((entry) => {
+    for (const entry of reservations) {
       const availableTableIndex = newTables.findIndex(
         (t) => !t.occupied && t.capacity >= entry.partySize
       );
 
       if (availableTableIndex !== -1) {
-        newTables[availableTableIndex] = {
-          ...newTables[availableTableIndex],
-          occupied: true,
-          guestName: entry.name,
-          partySize: entry.partySize,
-          seatedAt: new Date(),
-        };
-        const entryIndex = newWaitlist.findIndex((e) => e.id === entry.id);
-        if (entryIndex !== -1) {
-          newWaitlist.splice(entryIndex, 1);
-          seatedCount++;
-        }
+        const table = newTables[availableTableIndex];
+        await apiClient.seatWaitlistEntry(selectedEvent.id, entry.id, table.id);
+        newTables[availableTableIndex] = { ...table, occupied: true };
+        seatedCount++;
       }
-    });
-
-    setTables(newTables);
-    setWaitlist(newWaitlist);
-    
-    // Update event's currentFilledTables count
-    if (selectedEvent && selectedEvent.type === 'table-based') {
-      const filledCount = newTables.filter(t => t.occupied).length;
-      updateEvent(selectedEvent.id, { currentFilledTables: filledCount });
-      setSelectedEvent({ ...selectedEvent, currentFilledTables: filledCount } as any);
-      setEvents(getStoredEvents());
-      saveEventTables(selectedEvent.id, newTables);
     }
+    await refreshSelectedEventState(selectedEvent.id);
     
     if (seatedCount > 0) {
       toast.success(`Seated ${seatedCount} ${seatedCount === 1 ? 'guest' : 'groups'}`);
@@ -303,16 +219,30 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
-  const handleNoShow = (id: string) => {
+  const handleNoShow = async (id: string) => {
+    if (!selectedEvent) {
+      toast.error('Select an event first');
+      return;
+    }
     const entry = waitlist.find((e) => e.id === id);
     if (!entry) return;
-
-    setWaitlist(waitlist.filter((e) => e.id !== id));
+    await apiClient.removeWaitlistEntry(selectedEvent.id, id);
+    await refreshSelectedEventState(selectedEvent.id);
     toast.error(`${entry.name} marked as no-show`);
     simulateSync();
   };
 
-  const handleClearTable = (tableId: number) => {
+  const handleClearTable = async (tableId: number) => {
+    if (selectedEvent) {
+      await apiClient.clearTable(selectedEvent.id, tableId);
+      await refreshSelectedEventState(selectedEvent.id);
+      simulateSync();
+      return;
+    }
+    toast.error('Select an event first');
+  };
+
+  const handleClearTableLocal = (tableId: number) => {
     const table = tables.find((t) => t.id === tableId);
     if (!table) return;
 
@@ -368,7 +298,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     );
     setTables(updatedTables);
     
-    // Save tables to localStorage
+    // Persist updated tables for the selected event state
     if (selectedEvent && selectedEvent.type === 'table-based') {
       saveEventTables(selectedEvent.id, updatedTables);
     }
@@ -383,7 +313,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     );
     setTables(updatedTables);
     
-    // Save tables to localStorage
+    // Persist updated tables for the selected event state
     if (selectedEvent && selectedEvent.type === 'table-based') {
       saveEventTables(selectedEvent.id, updatedTables);
     }
@@ -441,7 +371,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     setTotalTables(newCount);
     setTables(newTables);
     
-    // Save tables to localStorage
+    // Persist updated tables for the selected event state
     if (selectedEvent && selectedEvent.type === 'table-based') {
       saveEventTables(selectedEvent.id, newTables);
       // Also update the event's numberOfTables
@@ -1568,7 +1498,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
       {/* Create Event Modal */}
       {showCreateEventModal && (
         <CreateEventModal
-          businessId={getStoredUser()?.businessId || 'default'}
+          businessId={user.businessId || 'default'}
           onClose={() => setShowCreateEventModal(false)}
           onCreateEvent={(event) => {
             addEvent(event);

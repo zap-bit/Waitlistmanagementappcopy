@@ -8,7 +8,7 @@ import { syncRouter } from './routes/sync.js';
 import { errorHandler, notFound } from './middleware/error.js';
 import { assertConfig, config } from './config.js';
 import { rateLimit } from './middleware/rateLimit.js';
-import { seedStore } from './data/store.js';
+import { isSupabaseConfigured } from './lib/supabase.js';
 
 const app = express();
 
@@ -42,7 +42,7 @@ app.use(
 app.use(express.json({ limit: '32kb' }));
 app.use(rateLimit);
 
-app.get('/health', (_req, res) => res.json({ ok: true, securityHeaders: true }));
+app.get('/health', (_req, res) => res.json({ ok: true, securityHeaders: true, supabaseConfigured: isSupabaseConfigured() }));
 
 app.use('/v1/auth', authRouter);
 app.use('/v1/events', eventsRouter);
@@ -53,8 +53,6 @@ app.use('/v1/sync', syncRouter);
 app.use(notFound);
 app.use(errorHandler);
 
-seedStore().then(() => {
-  app.listen(config.port, () => {
-    console.log(`Waitlist API listening on :${config.port}`);
-  });
+app.listen(config.port, () => {
+  console.log(`Waitlist API listening on :${config.port}`);
 });

@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { db } from '../data/store.js';
+import { getEventById } from '../data/supabaseStore.js';
 import { ApiError } from './error.js';
 import type { UserModel } from '../types/contracts.js';
 
@@ -47,18 +48,19 @@ export function requireRole(role: UserModel['role']) {
   };
 }
 
-export function requireStaffEventAccess(req: Request, _res: Response, next: NextFunction) {
+export async function requireStaffEventAccess(req: Request, _res: Response, next: NextFunction) {
   const user = req.authUser;
   const { eventId } = req.params as { eventId?: string };
   if (!user) return next(new ApiError(401, 'UNAUTHORIZED', 'Authentication required'));
   if (user.role !== 'staff') return next(new ApiError(403, 'FORBIDDEN', 'Staff access required'));
   if (!eventId) return next(new ApiError(400, 'INVALID_INPUT', 'eventId is required'));
 
-  const event = db.events.get(eventId);
-  if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
-  if (!user.businessId || event.businessId !== user.businessId) {
-    return next(new ApiError(403, 'FORBIDDEN', 'You cannot access this event'));
+  try {
+    const event = await getEventById(eventId);
+    if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));
+    if (!user.businessId || event.businessId !== user.businessId) return next(new ApiError(403, 'FORBIDDEN', 'You cannot access this event'));
+    return next();
+  } catch (error) {
+    return next(error);
   }
-
-  return next();
 }

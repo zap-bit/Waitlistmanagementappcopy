@@ -15,19 +15,12 @@ interface ProfileData {
   defaultPartySize: number;
   preferences: string;
 }
+const profileStore = new Map<string, ProfileData>();
 
 export function Profile({ user, onClose, onLogout }: ProfileProps) {
   const [profileData, setProfileData] = useState<ProfileData>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(`profile_${user.id}`);
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error('Error loading profile:', e);
-        }
-      }
-    }
+    const saved = profileStore.get(user.id);
+    if (saved) return saved;
     return {
       displayName: user.email.split('@')[0],
       phone: '',
@@ -39,11 +32,9 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
   const [isEditing, setIsEditing] = useState(false);
 
   const handleSave = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(`profile_${user.id}`, JSON.stringify(profileData));
-      toast.success('Profile saved successfully!');
-      setIsEditing(false);
-    }
+    profileStore.set(user.id, profileData);
+    toast.success('Profile saved successfully!');
+    setIsEditing(false);
   };
 
   const handleLogout = () => {
@@ -235,11 +226,8 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
             <div className="flex gap-3 pt-4">
               <button
                 onClick={() => {
-                  // Reset to saved data
-                  const saved = localStorage.getItem(`profile_${user.id}`);
-                  if (saved) {
-                    setProfileData(JSON.parse(saved));
-                  }
+                  const saved = profileStore.get(user.id);
+                  if (saved) setProfileData(saved);
                   setIsEditing(false);
                 }}
                 className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform"
@@ -276,15 +264,5 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
 
 // Export function to get saved profile data
 export function getSavedProfile(userId: string): ProfileData | null {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem(`profile_${userId}`);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return null;
-      }
-    }
-  }
-  return null;
+  return profileStore.get(userId) ?? null;
 }

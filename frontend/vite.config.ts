@@ -1,7 +1,13 @@
-import { defineConfig } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import path from 'path'
+import { createRequire } from 'node:module'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+
+const workspaceRoot = searchForWorkspaceRoot(process.cwd())
+const projectRoot = path.resolve(__dirname, '..')
+const require = createRequire(import.meta.url)
+const vitePackageRoot = path.dirname(require.resolve('vite/package.json'))
 
 export default defineConfig({
   plugins: [
@@ -14,6 +20,12 @@ export default defineConfig({
     alias: {
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
+    },
+  },
+  server: {
+    fs: {
+      // Keep allow-list narrow while allowing the actual resolved Vite install path.
+      allow: [workspaceRoot, projectRoot, vitePackageRoot],
     },
   },
 

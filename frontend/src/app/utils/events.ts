@@ -1,4 +1,5 @@
-// Simplified event types for multi-business support
+import { apiClient, ApiEvent } from '../../api/client';
+
 export type EventType = 'capacity-based' | 'table-based' | 'simple-capacity';
 export type EventStatus = 'active' | 'paused' | 'closed';
 export type QueueMode = 'single' | 'multiple';
@@ -8,7 +9,7 @@ export interface Queue {
   name: string;
   capacity: number;
   currentCount: number;
-  eventDateTime?: Date; // Optional date/time for this specific queue
+  eventDateTime?: Date;
 }
 
 export interface BaseEvent {
@@ -20,133 +21,112 @@ export interface BaseEvent {
   createdAt: Date;
   archived?: boolean;
   archivedAt?: Date;
+  code?: string;
 }
 
 export interface CapacityBasedEvent extends BaseEvent {
   type: 'capacity-based';
   queueMode: QueueMode;
-  capacity: number; // Used for single queue mode
-  estimatedWaitPerPerson: number; // minutes
+  capacity: number;
+  estimatedWaitPerPerson: number;
   location: string;
-  currentCount: number; // Number of people in queue/waiting (single mode)
-  queues?: Queue[]; // Array of queues for multiple mode
-  eventDateTime?: Date; // Optional date/time for the event
+  currentCount: number;
+  queues?: Queue[];
+  eventDateTime?: Date;
 }
 
 export interface TableBasedEvent extends BaseEvent {
   type: 'table-based';
   numberOfTables: number;
   averageTableSize: number;
-  reservationDuration: number; // minutes
+  reservationDuration: number;
   noShowPolicy: string;
   currentFilledTables: number;
-  eventDateTime?: Date; // Optional date/time for the event
+  eventDateTime?: Date;
 }
 
 export interface SimpleCapacityEvent extends BaseEvent {
   type: 'simple-capacity';
   capacity: number;
-  estimatedWaitPerPerson: number; // minutes
+  estimatedWaitPerPerson: number;
   location: string;
-  currentCount: number; // Number of people in queue/waiting
+  currentCount: number;
 }
 
 export type Event = CapacityBasedEvent | TableBasedEvent | SimpleCapacityEvent;
 
-// Get all events
-export const getStoredEvents = (): Event[] => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('events');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return parsed.map((event: any) => ({
-          ...event,
-          createdAt: new Date(event.createdAt),
-          archivedAt: event.archivedAt ? new Date(event.archivedAt) : undefined,
-          eventDateTime: event.eventDateTime ? new Date(event.eventDateTime) : undefined,
-          queues: event.queues?.map((queue: any) => ({
-            ...queue,
-            eventDateTime: queue.eventDateTime ? new Date(queue.eventDateTime) : undefined,
-          })),
-        }));
-      } catch (e) {
-        console.error('Error loading events from localStorage:', e);
-      }
-    }
+let eventsCache: Event[] = [];
+
+const fromApiEvent = (event: ApiEvent): Event => {
+  if (event.type === 'table-based') {
+    return {
+      ...event,
+      type: 'table-based',
+      createdAt: new Date(event.createdAt),
+    };
   }
-  return [];
+  return {
+    ...event,
+    type: 'capacity-based',
+    queueMode: 'single',
+    createdAt: new Date(event.createdAt),
+  };
 };
 
-// Save events
+export const syncEventsFromApi = async (): Promise<Event[]> => {
+  const response = await apiClient.listEvents();
+  eventsCache = response.data.map(fromApiEvent);
+  return eventsCache;
+};
+
+export const getStoredEvents = (): Event[] => eventsCache;
+
 export const saveEvents = (events: Event[]) => {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('events', JSON.stringify(events));
-  }
+  eventsCache = events;
 };
 
-// Add a new event
 export const addEvent = (event: Event) => {
-  const events = getStoredEvents();
-  events.push(event);
-  saveEvents(events);
+  eventsCache = [...eventsCache, event];
+  if (event.type === 'simple-capacity') return;
+  void apiClient.createEvent({
+    name: event.name,
+    type: event.type,
+    status: event.status,
+    ...(event.type === 'capacity-based'
+      ? {
+          capacity: event.capacity,
+          estimatedWaitPerPerson: event.estimatedWaitPerPerson,
+          location: event.location,
+          currentCount: event.currentCount,
+        }
+      : {
+          numberOfTables: event.numberOfTables,
+          averageTableSize: event.averageTableSize,
+          reservationDuration: event.reservationDuration,
+          noShowPolicy: event.noShowPolicy,
+          currentFilledTables: event.currentFilledTables,
+        }),
+  });
 };
 
-// Update an event
 export const updateEvent = (eventId: string, updates: Partial<Event>) => {
-  const events = getStoredEvents();
-  const index = events.findIndex(e => e.id === eventId);
-  if (index !== -1) {
-    events[index] = { ...events[index], ...updates };
-    saveEvents(events);
-  }
+  eventsCache = eventsCache.map((e) => (e.id === eventId ? { ...e, ...updates } as Event : e));
 };
 
-// Archive an event
 export const archiveEvent = (eventId: string) => {
-  const events = getStoredEvents();
-  const index = events.findIndex(e => e.id === eventId);
-  if (index !== -1) {
-    events[index] = { ...events[index], archived: true, archivedAt: new Date() };
-    saveEvents(events);
-  }
+  updateEvent(eventId, { archived: true, archivedAt: new Date() } as Partial<Event>);
 };
 
-// Restore an archived event
 export const restoreEvent = (eventId: string) => {
-  const events = getStoredEvents();
-  const index = events.findIndex(e => e.id === eventId);
-  if (index !== -1) {
-    events[index] = { ...events[index], archived: false, archivedAt: undefined };
-    saveEvents(events);
-  }
+  updateEvent(eventId, { archived: false, archivedAt: undefined } as Partial<Event>);
 };
 
-// Permanently delete an event
 export const deleteEvent = (eventId: string) => {
-  const events = getStoredEvents();
-  const filtered = events.filter(e => e.id !== eventId);
-  saveEvents(filtered);
+  eventsCache = eventsCache.filter((e) => e.id !== eventId);
+  void apiClient.deleteEvent(eventId);
 };
 
-// Get active (non-archived) events
-export const getActiveEvents = (): Event[] => {
-  return getStoredEvents().filter(e => !e.archived);
-};
-
-// Get archived events
-export const getArchivedEvents = (): Event[] => {
-  return getStoredEvents().filter(e => e.archived);
-};
-
-// Get events by business
-export const getEventsByBusiness = (businessId: string): Event[] => {
-  const events = getStoredEvents();
-  return events.filter(e => e.businessId === businessId);
-};
-
-// Get event by ID
-export const getEventById = (eventId: string): Event | null => {
-  const events = getStoredEvents();
-  return events.find(e => e.id === eventId) || null;
-};
+export const getActiveEvents = (): Event[] => getStoredEvents().filter((e) => !e.archived);
+export const getArchivedEvents = (): Event[] => getStoredEvents().filter((e) => e.archived);
+export const getEventsByBusiness = (businessId: string): Event[] => getStoredEvents().filter((e) => e.businessId === businessId);
+export const getEventById = (eventId: string): Event | null => getStoredEvents().find((e) => e.id === eventId) || null;
