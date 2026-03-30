@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "check:migration": "tsx scripts/applyMigration.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.100.1",
     "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
     "express": "^4.21.2",
     "nanoid": "^5.1.5"
   },

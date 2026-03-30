@@ -8,7 +8,7 @@ import { Table } from './TableGrid';
 import { getStoredEvents, Event, CapacityBasedEvent, Queue } from '../utils/events';
 import { Profile, getSavedProfile } from './Profile';
 import { User } from '../utils/auth';
-import { calculateDynamicWaitTime } from '../utils/waitTime';
+import { calculateDynamicWaitTime, fetchPredictedWait } from '../utils/waitTime';
 
 interface AttendeeViewProps {
   onLogout: () => void;
@@ -89,8 +89,41 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
 
   // Load available events on mount
   useEffect(() => {
-    const events = getStoredEvents().filter(e => e.status === 'active');
-    setAvailableEvents(events);
+    const localEvents = getStoredEvents().filter(e => e.status === 'active');
+    setAvailableEvents(localEvents);
+
+    // Also fetch from Supabase
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1'}/events`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.json())
+        .then(({ data }) => {
+          if (!data?.length) return;
+          const mapped = data.map((e: Record<string, unknown>) => ({
+            id: e.uuid as string,
+            businessId: e.account_uuid as string,
+            name: e.name as string,
+            type: e.event_type === 'TABLE' ? 'table-based' : 'capacity-based',
+            status: 'active',
+            createdAt: new Date(e.created_at as string || Date.now()),
+            archived: e.archived,
+            queueMode: 'single',
+            capacity: (e.queue_capacity as number) || 100,
+            estimatedWaitPerPerson: (e.est_wait as number) || 5,
+            location: (e.location as string) || '',
+            currentCount: 0,
+            numberOfTables: (e.num_tables as number) || 10,
+            averageTableSize: (e.avg_size as number) || 4,
+            reservationDuration: (e.reservation_duration as number) || 90,
+            noShowPolicy: 'Hold for 15 minutes',
+            currentFilledTables: 0,
+          }));
+          setAvailableEvents(mapped.filter((e: {archived: boolean}) => !e.archived));
+        })
+        .catch(e => console.error('Failed to load events:', e));
+    }
   }, []);
 
   // Persist attendee state to localStorage
@@ -121,7 +154,21 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
   const position = myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === selectedWaitlistId) + 1 : 0;
   
   // Calculate dynamic wait time based on current position
-  const estimatedWaitMinutes = myEntry ? calculateDynamicWaitTime(myEntry, allWaitlistEntries) : 0;
+  const [estimatedWaitMinutes, setEstimatedWaitMinutes] = useState(myEntry ? calculateDynamicWaitTime(myEntry, allWaitlistEntries) : 0);
+
+  useEffect(() => {
+    console.log("myEntry check", myEntry?.eventId);
+    if (!myEntry?.eventId) return;
+    fetchPredictedWait(myEntry.eventId).then(mins => {
+      if (mins !== null) setEstimatedWaitMinutes(mins);
+    });
+    const interval = setInterval(() => {
+      fetchPredictedWait(myEntry.eventId).then(mins => {
+        if (mins !== null) setEstimatedWaitMinutes(mins);
+      });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [myEntry?.eventId]);
   
   // Check if all tables are occupied
   const allTablesOccupied = tables.every((table) => table.occupied);
