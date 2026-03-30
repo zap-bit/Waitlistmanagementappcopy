@@ -1,4 +1,5 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { NextFunction, Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 
 export class ApiError extends Error {
   constructor(
@@ -11,18 +12,18 @@ export class ApiError extends Error {
   }
 }
 
-export function notFound(_req: Request, _res: Response, next: NextFunction) {
-  next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Resource not found'));
+export function notFound(req: Request, _res: Response, next: NextFunction) {
+  next(new ApiError(404, 'NOT_FOUND', `Route ${req.method} ${req.path} not found`));
 }
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   const requestId = `req-${Date.now()}`;
+  console.error('ERROR CAUGHT:', err);
 
   if (err instanceof ApiError) {
     return res.status(err.status).json({
       code: err.code,
       message: err.message,
-      details: err.details,
       timestamp: new Date().toISOString(),
       requestId,
     });

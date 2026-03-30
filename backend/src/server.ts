@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { authRouter } from './routes/auth.js';
@@ -8,7 +9,6 @@ import { syncRouter } from './routes/sync.js';
 import { errorHandler, notFound } from './middleware/error.js';
 import { assertConfig, config } from './config.js';
 import { rateLimit } from './middleware/rateLimit.js';
-import { seedStore } from './data/store.js';
 
 const app = express();
 
@@ -26,19 +26,17 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (config.corsAllowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error(`Origin ${origin} is not allowed by CORS`));
-    },
-    credentials: false,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    maxAge: 600,
-  }),
-);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (config.corsAllowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  },
+  credentials: false,
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 600,
+}));
 app.use(express.json({ limit: '32kb' }));
 app.use(rateLimit);
 
@@ -53,8 +51,6 @@ app.use('/v1/sync', syncRouter);
 app.use(notFound);
 app.use(errorHandler);
 
-seedStore().then(() => {
-  app.listen(config.port, () => {
-    console.log(`Waitlist API listening on :${config.port}`);
-  });
+app.listen(config.port, () => {
+  console.log(`Waitlist API listening on :${config.port}`);
 });

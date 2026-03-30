@@ -11,8 +11,8 @@ staffRouter.get('/dashboard', async (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
 
   const [{ data: waitlist, error: waitlistError }, { data: tables, error: tablesError }] = await Promise.all([
-    supabase.from('PARTY').select('*').eq('event_uuid', eventId),
-    supabase.from('EVENT_TABLE').select('*').eq('event_uuid', eventId),
+    supabase.from('party').select('*').eq('event_uuid', eventId),
+    supabase.from('event_table').select('*').eq('event_uuid', eventId),
   ]);
 
   if (waitlistError || tablesError) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to load dashboard'));
@@ -35,14 +35,14 @@ staffRouter.post('/promote', async (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
   const entryId = typeof req.body?.entryId === 'string' ? req.body.entryId : undefined;
 
-  let query = supabase.from('PARTY').select('*').eq('event_uuid', eventId).limit(1);
-  if (entryId) query = supabase.from('PARTY').select('*').eq('event_uuid', eventId).eq('UUID', entryId).limit(1);
+  let query = supabase.from('party').select('*').eq('event_uuid', eventId).limit(1);
+  if (entryId) query = supabase.from('party').select('*').eq('event_uuid', eventId).eq('uuid', entryId).limit(1);
   const { data, error } = await query;
 
   if (error || !data?.length) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
 
   const entry = data[0];
-  await supabase.from('NOTIFICATIONS').insert({ account_uuid: entry.account_uuid, event_uuid: eventId, sent_time: new Date().toISOString() });
+  await supabase.from('notifications').insert({ account_uuid: entry.account_uuid, event_uuid: eventId, sent_time: new Date().toISOString() });
 
   return res.json({ promoted: [entry] });
 });
@@ -51,11 +51,11 @@ staffRouter.post('/seat', async (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
   const { entryId } = req.body ?? {};
 
-  const { data: entry, error } = await supabase.from('PARTY').select('*').eq('UUID', entryId).eq('event_uuid', eventId).maybeSingle();
+  const { data: entry, error } = await supabase.from('party').select('*').eq('uuid', entryId).eq('event_uuid', eventId).maybeSingle();
   if (error || !entry) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
 
-  await supabase.from('PARTY').delete().eq('UUID', entry.UUID);
-  await supabase.from('CAP_WAITLIST').insert({
+  await supabase.from('party').delete().eq('uuid', entry.uuid);
+  await supabase.from('cap_waitlist').insert({
     account_uuid: entry.account_uuid,
     event_uuid: eventId,
     dropped_out: false,

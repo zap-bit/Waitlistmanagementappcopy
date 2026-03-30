@@ -8,7 +8,7 @@ import { QRCodeModal } from './QRCodeModal';
 import { Plus, Minus, ArrowUp, UserX, LogOut, Menu, X, Clock, Users, Edit2, Trash2, User as UserIcon, QrCode, Archive, ArchiveRestore } from 'lucide-react';
 import { toast } from 'sonner';
 import { WaitlistEntry } from '../App';
-import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent } from '../utils/events';
+import { Event, getStoredEvents, addEvent, deleteEvent, updateEvent, archiveEvent, restoreEvent, getActiveEvents, getArchivedEvents, CapacityBasedEvent, SimpleCapacityEvent, syncEventToSupabase } from '../utils/events';
 import { getStoredUser, User } from '../utils/auth';
 import { Profile } from './Profile';
 
@@ -69,6 +69,27 @@ const calculateWaitTime = (queueSize: number, throughput: number): number => {
 const saveEventTables = (eventId: string, tables: Table[]) => {
   if (typeof window !== 'undefined') {
     localStorage.setItem(`tables_${eventId}`, JSON.stringify(tables));
+  }
+  // Sync to Supabase
+  const token = localStorage.getItem('authToken');
+  if (token) {
+    tables.forEach(table => {
+      fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1'}/events/${eventId}/tables/${table.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          table_capacity: table.capacity,
+          name: table.name,
+          occupied: table.occupied,
+          guest_name: table.guestName || null,
+          party_size: table.partySize || null,
+          seated_at: table.seatedAt || null,
+          row_index: table.row,
+          col_index: table.col,
+          table_number: table.id,
+        }),
+      }).catch(e => console.error('Failed to sync table:', e));
+    });
   }
 };
 
@@ -1572,6 +1593,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
           onClose={() => setShowCreateEventModal(false)}
           onCreateEvent={(event) => {
             addEvent(event);
+            syncEventToSupabase(event);
             setEvents(getActiveEvents().filter(e => e.businessId === user.businessId));
             setArchivedEvents(getArchivedEvents().filter(e => e.businessId === user.businessId));
             

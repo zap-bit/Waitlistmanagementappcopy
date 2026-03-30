@@ -8,7 +8,7 @@ export const eventsRouter = Router();
 eventsRouter.use(requireAuth);
 
 eventsRouter.get('/', async (req, res, next) => {
-  let query = supabase.from('EVENTS').select('*');
+  let query = supabase.from('events').select('*');
   if (req.authUser?.role === 'staff') query = query.eq('account_uuid', req.authUser.businessId!);
   else query = query.eq('archived', false);
 
@@ -18,7 +18,7 @@ eventsRouter.get('/', async (req, res, next) => {
 });
 
 eventsRouter.get('/:eventId', async (req, res, next) => {
-  const { data: event, error } = await supabase.from('EVENTS').select('*').eq('UUID', req.params.eventId).maybeSingle();
+  const { data: event, error } = await supabase.from('events').select('*').eq('uuid', req.params.eventId).maybeSingle();
   if (error || !event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId: req.params.eventId }));
 
   if (req.authUser?.role === 'staff' && (!req.authUser.businessId || event.account_uuid !== req.authUser.businessId)) {
@@ -53,33 +53,60 @@ eventsRouter.post('/', requireRole('staff'), async (req, res, next) => {
     avg_service_time: payload.avg_service_time ?? null,
   };
 
-  const { data, error } = await supabase.from('EVENTS').insert(insertPayload).select('*').single();
+  const { data, error } = await supabase.from('events').insert(insertPayload).select('*').single();
   if (error) return next(new ApiError(400, 'INVALID_INPUT', error.message));
 
   return res.status(201).json(data);
 });
 
 eventsRouter.patch('/:eventId', requireRole('staff'), async (req, res, next) => {
-  const { data: existing } = await supabase.from('EVENTS').select('UUID,account_uuid').eq('UUID', req.params.eventId).maybeSingle();
+  const { data: existing } = await supabase.from('events').select('uuid,account_uuid').eq('uuid', req.params.eventId).maybeSingle();
   if (!existing) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId: req.params.eventId }));
   if (!req.authUser?.businessId || existing.account_uuid !== req.authUser.businessId) {
     return next(new ApiError(403, 'FORBIDDEN', 'You cannot modify this event'));
   }
 
-  const { data, error } = await supabase.from('EVENTS').update(req.body ?? {}).eq('UUID', req.params.eventId).select('*').single();
+  const { data, error } = await supabase.from('events').update(req.body ?? {}).eq('uuid', req.params.eventId).select('*').single();
   if (error) return next(new ApiError(400, 'INVALID_INPUT', error.message));
   return res.json(data);
 });
 
 eventsRouter.delete('/:eventId', requireRole('staff'), async (req, res, next) => {
-  const { data: existing } = await supabase.from('EVENTS').select('UUID,account_uuid').eq('UUID', req.params.eventId).maybeSingle();
+  const { data: existing } = await supabase.from('events').select('uuid,account_uuid').eq('uuid', req.params.eventId).maybeSingle();
   if (!existing) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId: req.params.eventId }));
   if (!req.authUser?.businessId || existing.account_uuid !== req.authUser.businessId) {
     return next(new ApiError(403, 'FORBIDDEN', 'You cannot delete this event'));
   }
 
-  const { error } = await supabase.from('EVENTS').update({ archived: true }).eq('UUID', req.params.eventId);
+  const { error } = await supabase.from('events').update({ archived: true }).eq('uuid', req.params.eventId);
   if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to archive event'));
+
+  return res.json({ ok: true });
+});
+
+eventsRouter.put('/:eventId/tables/:tableId', requireRole('staff'), async (req, res, next) => {
+  const { eventId, tableId } = req.params;
+  const payload = req.body ?? {};
+
+  const { data: existing } = await supabase
+    .from('event_table')
+    .select('uuid')
+    .eq('event_uuid', eventId)
+    .eq('table_number', tableId)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('event_table')
+      .update(payload)
+      .eq('uuid', existing.uuid);
+    if (error) return next(new ApiError(400, 'INVALID_INPUT', error.message));
+  } else {
+    const { error } = await supabase
+      .from('event_table')
+      .insert({ ...payload, event_uuid: eventId, account_uuid: req.authUser!.businessId });
+    if (error) return next(new ApiError(400, 'INVALID_INPUT', error.message));
+  }
 
   return res.json({ ok: true });
 });

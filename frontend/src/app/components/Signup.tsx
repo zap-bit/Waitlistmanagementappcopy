@@ -24,7 +24,7 @@ export function Signup({ onSignupUser, onSignupBusiness, onBackToWelcome, onSwit
       return;
     }
 
-    if (password.length < 6) {
+    if (password.length < 12) {
       toast.error('Password must be at least 6 characters');
       return;
     }

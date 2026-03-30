@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
-import { db } from '../data/store.js';
 import { ApiError } from './error.js';
 import type { SessionUser } from '../types/contracts.js';
 import { supabase } from '../lib/supabase.js';
+import { verifyAccessToken } from '../lib/session.js';
 
 declare global {
   namespace Express {
@@ -23,29 +23,23 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
   const token = readBearerToken(req);
   if (!token) return next(new ApiError(401, 'UNAUTHORIZED', 'Missing bearer token'));
 
-  const session = db.accessTokens.get(token);
-  if (!session || session.expiresAt <= Date.now()) {
-    if (session) db.accessTokens.delete(token);
-    return next(new ApiError(401, 'UNAUTHORIZED', 'Access token expired or invalid'));
-  }
+  const session = verifyAccessToken(token);
+  if (!session) return next(new ApiError(401, 'UNAUTHORIZED', 'Access token expired or invalid'));
 
   const { data: account, error } = await supabase
-    .from('ACCOUNT')
-    .select('UUID,name,email,account_type')
-    .eq('UUID', session.userId)
+    .from('account')
+    .select('uuid,name,email,account_type')
+    .eq('uuid', session.userId)
     .maybeSingle();
 
-  if (error || !account) {
-    db.accessTokens.delete(token);
-    return next(new ApiError(401, 'UNAUTHORIZED', 'Session user not found'));
-  }
+  if (error || !account) return next(new ApiError(401, 'UNAUTHORIZED', 'Session user not found'));
 
   req.authUser = {
-    id: account.UUID,
+    id: account.uuid,
     email: account.email,
     name: account.name,
     role: account.account_type === 'BUSINESS' ? 'staff' : 'user',
-    businessId: account.account_type === 'BUSINESS' ? account.UUID : undefined,
+    businessId: account.account_type === 'BUSINESS' ? account.uuid : undefined,
   };
   req.authAccessToken = token;
   return next();
@@ -67,9 +61,9 @@ export async function requireStaffEventAccess(req: Request, _res: Response, next
   if (!eventId) return next(new ApiError(400, 'INVALID_INPUT', 'eventId is required'));
 
   const { data: event, error } = await supabase
-    .from('EVENTS')
-    .select('UUID,account_uuid')
-    .eq('UUID', eventId)
+    .from('events')
+    .select('uuid,account_uuid')
+    .eq('uuid', eventId)
     .maybeSingle();
 
   if (error || !event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found'));

@@ -1,7 +1,8 @@
+import 'dotenv/config';
 import { Router } from 'express';
 import { ApiError } from '../middleware/error.js';
 import { hashPassword, verifyPassword } from '../lib/security.js';
-import { issueSession, revokeAccessToken, revokeRefreshToken, rotateRefreshToken } from '../lib/session.js';
+import { issueSession, rotateRefreshToken } from '../lib/session.js';
 import { requireAuth } from '../middleware/auth.js';
 import { supabase } from '../lib/supabase.js';
 import type { SessionUser } from '../types/contracts.js';
@@ -57,8 +58,8 @@ authRouter.post('/login', async (req, res, next) => {
     if (!password) return next(new ApiError(400, 'INVALID_INPUT', 'email and password are required'));
 
     const { data: account, error } = await supabase
-      .from('ACCOUNT')
-      .select('UUID,name,email,password,account_type')
+      .from('account')
+      .select('uuid,name,email,password,account_type')
       .eq('email', email)
       .maybeSingle();
 
@@ -67,11 +68,11 @@ authRouter.post('/login', async (req, res, next) => {
     }
 
     const user: SessionUser = {
-      id: account.UUID,
+      id: account.uuid,
       email: account.email,
       name: account.name,
       role: account.account_type === 'BUSINESS' ? 'staff' : 'user',
-      businessId: account.account_type === 'BUSINESS' ? account.UUID : undefined,
+      businessId: account.account_type === 'BUSINESS' ? account.uuid : undefined,
     };
 
     return res.json(toAuthResponse(user));
@@ -86,30 +87,21 @@ authRouter.post('/signup/user', async (req, res, next) => {
     const password = validatePassword(req.body?.password);
     const name = validateName(req.body?.name, 'name');
 
-    const { data: existing } = await supabase.from('ACCOUNT').select('UUID').eq('email', email).maybeSingle();
+    const { data: existing } = await supabase.from('account').select('uuid').eq('email', email).maybeSingle();
     if (existing) return next(new ApiError(409, 'EMAIL_EXISTS', 'Email already exists'));
 
     const { data: account, error } = await supabase
-      .from('ACCOUNT')
-      .insert({
-        name,
-        account_type: 'USER',
-        email,
-        password: await hashPassword(password),
-      })
-      .select('UUID,name,email,account_type')
+      .from('account')
+      .insert({ name, account_type: 'USER', email, password: await hashPassword(password) })
+      .select('uuid,name,email,account_type')
       .single();
 
-    if (error || !account) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to create user account'));
+    if (error || !account) {
+      console.error('Supabase insert error:', JSON.stringify(error));
+      return next(new ApiError(500, 'SERVER_ERROR', 'Failed to create user account'));
+    }
 
-    return res.status(201).json(
-      toAuthResponse({
-        id: account.UUID,
-        email: account.email,
-        name: account.name,
-        role: 'user',
-      }),
-    );
+    return res.status(201).json(toAuthResponse({ id: account.uuid, email: account.email, name: account.name, role: 'user' }));
   } catch (error) {
     return next(error);
   }
@@ -122,32 +114,21 @@ authRouter.post('/signup/business', async (req, res, next) => {
     const ownerName = validateName(req.body?.ownerName, 'ownerName');
     const businessName = validateName(req.body?.businessName, 'businessName');
 
-    const { data: existing } = await supabase.from('ACCOUNT').select('UUID').eq('email', email).maybeSingle();
+    const { data: existing } = await supabase.from('account').select('uuid').eq('email', email).maybeSingle();
     if (existing) return next(new ApiError(409, 'EMAIL_EXISTS', 'Email already exists'));
 
     const { data: account, error } = await supabase
-      .from('ACCOUNT')
-      .insert({
-        name: ownerName,
-        account_type: 'BUSINESS',
-        email,
-        password: await hashPassword(password),
-        business_name: businessName,
-      })
-      .select('UUID,name,email,account_type')
+      .from('account')
+      .insert({ name: ownerName, account_type: 'BUSINESS', email, password: await hashPassword(password), business_name: businessName })
+      .select('uuid,name,email,account_type')
       .single();
 
-    if (error || !account) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to create business account'));
+    if (error || !account) {
+      console.error('Supabase insert error:', JSON.stringify(error));
+      return next(new ApiError(500, 'SERVER_ERROR', 'Failed to create business account'));
+    }
 
-    return res.status(201).json(
-      toAuthResponse({
-        id: account.UUID,
-        email: account.email,
-        name: account.name,
-        role: 'staff',
-        businessId: account.UUID,
-      }),
-    );
+    return res.status(201).json(toAuthResponse({ id: account.uuid, email: account.email, name: account.name, role: 'staff', businessId: account.uuid }));
   } catch (error) {
     return next(error);
   }
@@ -161,42 +142,35 @@ authRouter.post('/refresh', async (req, res, next) => {
   if (!session) return next(new ApiError(401, 'UNAUTHORIZED', 'Refresh token expired or invalid'));
 
   const { data: account, error } = await supabase
-    .from('ACCOUNT')
-    .select('UUID,name,email,account_type')
-    .eq('UUID', session.userId)
+    .from('account')
+    .select('uuid,name,email,account_type')
+    .eq('uuid', session.userId)
     .maybeSingle();
 
-  if (error || !account) {
-    revokeAccessToken(session.accessToken);
-    revokeRefreshToken(session.refreshToken);
-    return next(new ApiError(401, 'UNAUTHORIZED', 'Refresh token user not found'));
-  }
+  if (error || !account) return next(new ApiError(401, 'UNAUTHORIZED', 'Refresh token user not found'));
 
   return res.json({
     token: session.accessToken,
     refreshToken: session.refreshToken,
     expiresIn: session.expiresIn,
     user: sanitizeUser({
-      id: account.UUID,
+      id: account.uuid,
       email: account.email,
       name: account.name,
       role: account.account_type === 'BUSINESS' ? 'staff' : 'user',
-      businessId: account.account_type === 'BUSINESS' ? account.UUID : undefined,
+      businessId: account.account_type === 'BUSINESS' ? account.uuid : undefined,
     }),
   });
 });
 
-authRouter.post('/logout', requireAuth, (req, res) => {
-  revokeAccessToken(req.authAccessToken);
-  const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : undefined;
-  revokeRefreshToken(refreshToken);
-  return res.json({ ok: true });
+authRouter.post('/logout', requireAuth, (_req, res) => {
+  return res.json({ ok: true, note: 'Stateless token logout; discard tokens client-side' });
 });
 
 authRouter.get('/me', requireAuth, (req, res) => res.json({ user: sanitizeUser(req.authUser!) }));
 
 authRouter.get('/me/waitlist', requireAuth, async (req, res, next) => {
-  const { data, error } = await supabase.from('PARTY').select('*').eq('account_uuid', req.authUser!.id);
+  const { data, error } = await supabase.from('party').select('*').eq('account_uuid', req.authUser!.id);
   if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to load waitlist entries'));
   return res.json({ data });
 });
