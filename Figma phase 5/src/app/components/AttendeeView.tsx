@@ -1708,27 +1708,6 @@ export function AttendeeView({
                       </>
                     )}
 
-                    {selectedEvent.type === "table-based" && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Special Requests{" "}
-                          <span className="text-gray-400 font-normal">
-                            (Optional)
-                          </span>
-                        </label>
-                        <textarea
-                          value={specialRequests}
-                          onChange={(e) =>
-                            setSpecialRequests(e.target.value)
-                          }
-                          placeholder="Dietary restrictions, seating preferences, etc."
-                          rows={3}
-                          className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                          style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}
-                        />
-                      </div>
-                    )}
-
                   </div>
 
                   <button
@@ -2533,25 +2512,6 @@ export function AttendeeView({
                         className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Special Requests{" "}
-                      <span className="text-gray-400 font-normal">
-                        (Optional)
-                      </span>
-                    </label>
-                    <textarea
-                      value={specialRequests}
-                      onChange={(e) =>
-                        setSpecialRequests(e.target.value)
-                      }
-                      placeholder="Dietary restrictions, seating preferences, etc."
-                      rows={3}
-                      className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                      style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}
-                    />
                   </div>
                 </>
               )}

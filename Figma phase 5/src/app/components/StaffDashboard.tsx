@@ -374,202 +374,23 @@ export function StaffDashboard({
     }
   };
 
-  // Helper function to calculate distance between two tables
-  const calculateTableDistance = (table1: Table, table2: Table): number => {
-    const rowDiff = Math.abs(table1.row - table2.row);
-    const colDiff = Math.abs(table1.col - table2.col);
-    // Use Euclidean distance
-    return Math.sqrt(rowDiff * rowDiff + colDiff * colDiff);
-  };
-
-  // Helper function to find adjacent tables (direct neighbors)
-  const findAdjacentTables = (table: Table, allTables: Table[]): Table[] => {
-    return allTables.filter(t => {
-      const rowDiff = Math.abs(t.row - table.row);
-      const colDiff = Math.abs(t.col - table.col);
-      // Adjacent means within 1 row/col (including diagonals)
-      return (rowDiff <= 1 && colDiff <= 1) && t.id !== table.id;
-    });
-  };
-
-  // Helper function to find the best table based on special requests
-  const findBestTable = (entry: WaitlistEntry, allTables: Table[]) => {
-    if (!entry.specialRequests) {
-      // No special requests, just find any available table with sufficient capacity
-      return allTables.find(
-        (t) => !t.occupied && t.capacity >= entry.partySize,
-      );
-    }
-
-    const requestLower = entry.specialRequests.toLowerCase();
-    
-    // Check for specific table requests (e.g., "table 4", "table #4", "table number 4")
-    const tableNumberMatch = requestLower.match(/table\s*#?\s*(\d+)/);
-    if (tableNumberMatch) {
-      const requestedTableNumber = parseInt(tableNumberMatch[1]);
-      const requestedTable = allTables.find(
-        (t) => {
-          const tableNum = t.name.match(/\d+/);
-          return tableNum && parseInt(tableNum[0]) === requestedTableNumber;
-        }
-      );
-      
-      if (requestedTable && !requestedTable.occupied && requestedTable.capacity >= entry.partySize) {
-        return requestedTable;
-      } else if (requestedTable && requestedTable.occupied) {
-        toast.info(`Table ${requestedTableNumber} is occupied. Finding alternative...`, {
-          description: `${entry.name} requested this table`,
-        });
-      } else if (requestedTable && requestedTable.capacity < entry.partySize) {
-        toast.info(`Table ${requestedTableNumber} is too small (capacity ${requestedTable.capacity}). Finding alternative...`, {
-          description: `Party size: ${entry.partySize}`,
-        });
-      }
-    }
-    
-    // Check for requests to sit with another guest
-    // Look for patterns like "with John", "join Sarah", "same table as Mike"
-    const withGuestMatch = requestLower.match(/(?:with|join|same\s+table\s+as)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/);
-    if (withGuestMatch) {
-      const requestedGuestName = withGuestMatch[1].trim();
-      const occupiedTableWithGuest = allTables.find(
-        (t) => t.occupied && 
-               t.guestName && 
-               t.guestName.toLowerCase().includes(requestedGuestName.toLowerCase())
-      );
-      
-      if (occupiedTableWithGuest && occupiedTableWithGuest.capacity >= (occupiedTableWithGuest.partySize || 0) + entry.partySize) {
-        toast.success(`Seating ${entry.name} with ${occupiedTableWithGuest.guestName}!`, {
-          description: `Both parties at ${occupiedTableWithGuest.name}`,
-        });
-        return occupiedTableWithGuest; // Will combine parties at this table
-      } else if (occupiedTableWithGuest) {
-        toast.info(`Cannot join ${occupiedTableWithGuest.guestName} - table is full. Finding separate table...`, {
-          description: `${entry.name} requested to sit together`,
-        });
-      }
-    }
-    
-    // Check for requests to sit NEAR another guest
-    // Look for patterns like "near John", "close to Sarah", "next to Mike"
-    const nearGuestMatch = requestLower.match(/(?:near|close\s+to|next\s+to)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/);
-    if (nearGuestMatch) {
-      const requestedGuestName = nearGuestMatch[1].trim();
-      const occupiedTableWithGuest = allTables.find(
-        (t) => t.occupied && 
-               t.guestName && 
-               t.guestName.toLowerCase().includes(requestedGuestName.toLowerCase())
-      );
-      
-      if (occupiedTableWithGuest) {
-        // Find adjacent tables first
-        const adjacentTables = findAdjacentTables(occupiedTableWithGuest, allTables);
-        const availableAdjacentTables = adjacentTables.filter(
-          (t) => !t.occupied && t.capacity >= entry.partySize
-        );
-        
-        if (availableAdjacentTables.length > 0) {
-          // Prioritize direct neighbors (not diagonals)
-          const directNeighbors = availableAdjacentTables.filter(t => {
-            const rowDiff = Math.abs(t.row - occupiedTableWithGuest.row);
-            const colDiff = Math.abs(t.col - occupiedTableWithGuest.col);
-            return (rowDiff === 0 && colDiff === 1) || (rowDiff === 1 && colDiff === 0);
-          });
-          
-          const tableToUse = directNeighbors.length > 0 ? directNeighbors[0] : availableAdjacentTables[0];
-          toast.success(`Seating ${entry.name} next to ${occupiedTableWithGuest.guestName}!`, {
-            description: `${entry.name} at ${tableToUse.name}, near ${occupiedTableWithGuest.name}`,
-          });
-          return tableToUse;
-        }
-        
-        // If no adjacent tables available, find the closest available table
-        const availableTables = allTables.filter(
-          (t) => !t.occupied && t.capacity >= entry.partySize
-        );
-        
-        if (availableTables.length > 0) {
-          const sortedByDistance = availableTables.sort((a, b) => {
-            return calculateTableDistance(a, occupiedTableWithGuest) - 
-                   calculateTableDistance(b, occupiedTableWithGuest);
-          });
-          
-          toast.info(`Seating ${entry.name} as close as possible to ${occupiedTableWithGuest.guestName}`, {
-            description: `${entry.name} at ${sortedByDistance[0].name}`,
-          });
-          return sortedByDistance[0];
-        }
-      } else {
-        toast.info(`Could not find ${requestedGuestName}. Finding available table...`, {
-          description: `${entry.name} requested to sit near ${requestedGuestName}`,
-        });
-      }
-    }
-    
-    // Check for seating preferences (window, corner, etc.) and prioritize accordingly
-    const hasWindowRequest = /window/.test(requestLower);
-    const hasQuietRequest = /quiet|corner/.test(requestLower);
-    
-    const availableTables = allTables.filter(
-      (t) => !t.occupied && t.capacity >= entry.partySize
-    );
-    
-    if (hasWindowRequest) {
-      // Prioritize tables with lower numbers (assuming they're near windows)
-      const sortedTables = [...availableTables].sort((a, b) => {
-        const aNum = parseInt(a.name.match(/\d+/)?.[0] || "999");
-        const bNum = parseInt(b.name.match(/\d+/)?.[0] || "999");
-        return aNum - bNum;
-      });
-      if (sortedTables.length > 0) {
-        toast.info(`Seating near window as requested`, {
-          description: `${entry.name} at ${sortedTables[0].name}`,
-        });
-        return sortedTables[0];
-      }
-    }
-    
-    if (hasQuietRequest) {
-      // Prioritize tables with higher numbers (assuming they're quieter/corner)
-      const sortedTables = [...availableTables].sort((a, b) => {
-        const aNum = parseInt(a.name.match(/\d+/)?.[0] || "0");
-        const bNum = parseInt(b.name.match(/\d+/)?.[0] || "0");
-        return bNum - aNum;
-      });
-      if (sortedTables.length > 0) {
-        toast.info(`Seating in quiet area as requested`, {
-          description: `${entry.name} at ${sortedTables[0].name}`,
-        });
-        return sortedTables[0];
-      }
-    }
-    
-    // Default: find any available table with sufficient capacity
-    return availableTables[0];
-  };
-
   const handlePromote = (id: string) => {
     const entry = waitlist.find((e) => e.id === id);
     if (!entry) return;
 
-    const availableTable = findBestTable(entry, tables);
+    const availableTable = tables.find(
+      (t) => !t.occupied && t.capacity >= entry.partySize,
+    );
 
     if (availableTable) {
-      // Check if this is a request to join an existing party
-      const isJoiningExistingParty = availableTable.occupied && availableTable.guestName;
-      
       const updatedTables = tables.map((t) =>
         t.id === availableTable.id
           ? {
               ...t,
               occupied: true,
-              guestName: isJoiningExistingParty 
-                ? `${availableTable.guestName} & ${entry.name}` 
-                : entry.name,
-              partySize: isJoiningExistingParty 
-                ? (availableTable.partySize || 0) + entry.partySize 
-                : entry.partySize,
-              seatedAt: availableTable.seatedAt || new Date(),
+              guestName: entry.name,
+              partySize: entry.partySize,
+              seatedAt: new Date(),
             }
           : t,
       );
@@ -596,14 +417,12 @@ export function StaffDashboard({
         saveEventTables(selectedEvent.id, updatedTables);
       }
 
-      if (!isJoiningExistingParty) {
-        toast.success(
-          `${entry.name} seated at ${availableTable.name}`,
-          {
-            description: `Party of ${entry.partySize}`,
-          },
-        );
-      }
+      toast.success(
+        `${entry.name} seated at ${availableTable.name}`,
+        {
+          description: `Party of ${entry.partySize}`,
+        },
+      );
       simulateSync();
     } else {
       toast.error("No available tables for this party size", {
@@ -623,34 +442,24 @@ export function StaffDashboard({
     const newWaitlist = [...waitlist];
 
     reservations.forEach((entry) => {
-      const availableTable = findBestTable(entry, newTables);
+      const availableTableIndex = newTables.findIndex(
+        (t) => !t.occupied && t.capacity >= entry.partySize,
+      );
 
-      if (availableTable) {
-        const availableTableIndex = newTables.findIndex(
-          (t) => t.id === availableTable.id
+      if (availableTableIndex !== -1) {
+        newTables[availableTableIndex] = {
+          ...newTables[availableTableIndex],
+          occupied: true,
+          guestName: entry.name,
+          partySize: entry.partySize,
+          seatedAt: new Date(),
+        };
+        const entryIndex = newWaitlist.findIndex(
+          (e) => e.id === entry.id,
         );
-        
-        if (availableTableIndex !== -1) {
-          const isJoiningExistingParty = availableTable.occupied && availableTable.guestName;
-          
-          newTables[availableTableIndex] = {
-            ...newTables[availableTableIndex],
-            occupied: true,
-            guestName: isJoiningExistingParty 
-              ? `${availableTable.guestName} & ${entry.name}` 
-              : entry.name,
-            partySize: isJoiningExistingParty 
-              ? (availableTable.partySize || 0) + entry.partySize 
-              : entry.partySize,
-            seatedAt: availableTable.seatedAt || new Date(),
-          };
-          const entryIndex = newWaitlist.findIndex(
-            (e) => e.id === entry.id,
-          );
-          if (entryIndex !== -1) {
-            newWaitlist.splice(entryIndex, 1);
-            seatedCount++;
-          }
+        if (entryIndex !== -1) {
+          newWaitlist.splice(entryIndex, 1);
+          seatedCount++;
         }
       }
     });
@@ -2495,59 +2304,16 @@ export function StaffDashboard({
                                 </span>
                               </div>
                             )}
-                          {entry.specialRequests && (() => {
-                            const requestLower = entry.specialRequests.toLowerCase();
-                            const tableMatch = requestLower.match(/table\s*#?\s*(\d+)/);
-                            const withGuestMatch = requestLower.match(/(?:with|join|same\s+table\s+as)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/);
-                            const nearGuestMatch = requestLower.match(/(?:near|close\s+to|next\s+to)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/);
-                            const hasPreference = /window|quiet|corner/.test(requestLower);
-                            
-                            return (
-                              <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 max-w-full">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <div className="text-xs font-semibold text-blue-900">
-                                    Special Request:
-                                  </div>
-                                  {(tableMatch || withGuestMatch || nearGuestMatch || hasPreference) && (
-                                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold">
-                                      Action Required
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-sm text-blue-800 break-words overflow-hidden whitespace-pre-wrap">
-                                  {entry.specialRequests}
-                                </div>
-                                {tableMatch && (
-                                  <div className="mt-2 pt-2 border-t border-blue-200">
-                                    <div className="text-xs text-blue-700 font-medium">
-                                      💺 Requesting Table #{tableMatch[1]}
-                                    </div>
-                                  </div>
-                                )}
-                                {withGuestMatch && !nearGuestMatch && (
-                                  <div className="mt-2 pt-2 border-t border-blue-200">
-                                    <div className="text-xs text-blue-700 font-medium">
-                                      👥 Wants to join: {withGuestMatch[1]}
-                                    </div>
-                                  </div>
-                                )}
-                                {nearGuestMatch && (
-                                  <div className="mt-2 pt-2 border-t border-blue-200">
-                                    <div className="text-xs text-blue-700 font-medium">
-                                      📍 Wants to sit near: {nearGuestMatch[1]}
-                                    </div>
-                                  </div>
-                                )}
-                                {hasPreference && !tableMatch && !withGuestMatch && !nearGuestMatch && (
-                                  <div className="mt-2 pt-2 border-t border-blue-200">
-                                    <div className="text-xs text-blue-700 font-medium">
-                                      ⭐ Seating preference noted
-                                    </div>
-                                  </div>
-                                )}
+                          {entry.specialRequests && (
+                            <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-2 max-w-full">
+                              <div className="text-xs font-semibold text-blue-900 mb-1">
+                                Special Request:
                               </div>
-                            );
-                          })()}
+                              <div className="text-sm text-blue-800 break-words overflow-hidden">
+                                {entry.specialRequests}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
 
