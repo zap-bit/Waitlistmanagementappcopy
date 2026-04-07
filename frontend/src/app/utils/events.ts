@@ -9,6 +9,7 @@ export interface Queue {
   capacity: number;
   currentCount: number;
   eventDateTime?: Date; // Optional date/time for this specific queue
+  manualOffset?: number; // Tracks manual additions/removals from staff dashboard
 }
 
 export interface BaseEvent {
@@ -18,6 +19,8 @@ export interface BaseEvent {
   type: EventType;
   status: EventStatus;
   createdAt: Date;
+  isPublic: boolean; // Whether the event is publicly visible or private
+  eventCode: string; // Unique code for users to join the event
   archived?: boolean;
   archivedAt?: Date;
 }
@@ -31,6 +34,7 @@ export interface CapacityBasedEvent extends BaseEvent {
   currentCount: number; // Number of people in queue/waiting (single mode)
   queues?: Queue[]; // Array of queues for multiple mode
   eventDateTime?: Date; // Optional date/time for the event
+  manualOffset?: number; // Tracks manual additions/removals for single queue mode
 }
 
 export interface TableBasedEvent extends BaseEvent {
@@ -52,6 +56,16 @@ export interface SimpleCapacityEvent extends BaseEvent {
 }
 
 export type Event = CapacityBasedEvent | TableBasedEvent | SimpleCapacityEvent;
+
+// Generate a unique event code
+export const generateEventCode = (): string => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude confusing characters
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+};
 
 // Get all events
 export const getStoredEvents = (): Event[] => {
@@ -98,6 +112,16 @@ export const updateEvent = (eventId: string, updates: Partial<Event>) => {
   const index = events.findIndex(e => e.id === eventId);
   if (index !== -1) {
     events[index] = { ...events[index], ...updates };
+    saveEvents(events);
+  }
+};
+
+// Update an event with full event object (overload)
+export const updateEventFull = (event: Event) => {
+  const events = getStoredEvents();
+  const index = events.findIndex(e => e.id === event.id);
+  if (index !== -1) {
+    events[index] = event;
     saveEvents(events);
   }
 };
@@ -149,90 +173,4 @@ export const getEventsByBusiness = (businessId: string): Event[] => {
 export const getEventById = (eventId: string): Event | null => {
   const events = getStoredEvents();
   return events.find(e => e.id === eventId) || null;
-};
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
-
-export const syncEventToSupabase = async (event: Event): Promise<void> => {
-  const token = localStorage.getItem('authToken');
-  if (!token) return;
-
-  const eventType = event.type === 'table-based' ? 'TABLE' : 'CAPACITY';
-
-  const isTable = event.type === 'table-based';
-  const payload: Record<string, unknown> = {
-    name: event.name,
-    event_type: eventType,
-    archived: event.archived ?? false,
-    location: !isTable ? (event as CapacityBasedEvent).location : null,
-    queue_capacity: !isTable ? (event as CapacityBasedEvent).capacity : null,
-    est_wait: !isTable ? (event as CapacityBasedEvent).estimatedWaitPerPerson : null,
-    cap_type: !isTable ? 'SINGLE' : null,
-    num_tables: isTable ? (event as TableBasedEvent).numberOfTables : null,
-    avg_size: isTable ? (event as TableBasedEvent).averageTableSize : null,
-    reservation_duration: isTable ? (event as TableBasedEvent).reservationDuration : null,
-    no_show_policy: isTable ? 15 : null,
-    no_show_rate: null,
-    avg_service_time: null,
-  };
-
-  try {
-    await fetch(`${API_BASE}/events`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    console.error('Failed to sync event to Supabase:', e);
-  }
-};
-
-export const loadEventsFromSupabase = async (): Promise<void> => {
-  const token = localStorage.getItem('authToken');
-  if (!token) return;
-
-  try {
-    const res = await fetch(`${API_BASE}/events`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return;
-    const { data } = await res.json();
-    if (!data?.length) return;
-
-    const mapped: Event[] = data.map((e: Record<string, unknown>) => {
-      const base = {
-        id: e.uuid as string,
-        businessId: e.account_uuid as string,
-        name: e.name as string,
-        status: 'active' as EventStatus,
-        createdAt: new Date(e.created_at as string || Date.now()),
-        archived: e.archived as boolean,
-      };
-
-      if (e.event_type === 'TABLE') {
-        return {
-          ...base,
-          type: 'table-based' as const,
-          numberOfTables: (e.num_tables as number) || 10,
-          averageTableSize: (e.avg_size as number) || 4,
-          reservationDuration: (e.reservation_duration as number) || 90,
-          noShowPolicy: 'Hold for 15 minutes',
-          currentFilledTables: 0,
-        } as TableBasedEvent;
-      }
-
-      return {
-        ...base,
-        type: 'capacity-based' as const,
-        queueMode: 'single' as const,
-        capacity: (e.queue_capacity as number) || 100,
-        estimatedWaitPerPerson: (e.est_wait as number) || 5,
-        location: (e.location as string) || '',
-        currentCount: 0,
-      } as CapacityBasedEvent;
-    });
-
-    saveEvents(mapped);
-  } catch (e) {
-    console.error('Failed to load events from Supabase:', e);
-  }
 };

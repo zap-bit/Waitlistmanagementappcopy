@@ -14,7 +14,7 @@ export function QRCodeModal({ event, onClose, queueId, queueName }: QRCodeModalP
   // Create QR code data (JSON string with event info)
   const qrData = JSON.stringify({
     eventId: event.id,
-    eventCode: event.eventCode,
+    eventCode: event.code,
     eventName: event.name,
     queueId: queueId || null,
     queueName: queueName || null,
@@ -74,8 +74,8 @@ export function QRCodeModal({ event, onClose, queueId, queueName }: QRCodeModalP
   };
 
   const handleCopyCode = () => {
-    if (event.eventCode) {
-      navigator.clipboard.writeText(event.eventCode);
+    if (event.code) {
+      navigator.clipboard.writeText(event.code);
       toast.success('Event code copied to clipboard!');
     }
   };
@@ -84,8 +84,8 @@ export function QRCodeModal({ event, onClose, queueId, queueName }: QRCodeModalP
     const shareData = {
       title: displayName,
       text: queueName 
-        ? `Join ${event.name} - ${queueName}! Use code: ${event.eventCode || 'N/A'}`
-        : `Join ${event.name}! Use code: ${event.eventCode || 'N/A'}`,
+        ? `Join ${event.name} - ${queueName}! Use code: ${event.code || 'N/A'}`
+        : `Join ${event.name}! Use code: ${event.code || 'N/A'}`,
     };
 
     try {
@@ -139,9 +139,9 @@ export function QRCodeModal({ event, onClose, queueId, queueName }: QRCodeModalP
               <p className="text-xs text-gray-500 mb-1 font-medium">Event Code</p>
               <div className="flex items-center justify-center gap-2">
                 <p className="text-2xl font-bold text-gray-800 tracking-wider">
-                  {event.eventCode || 'N/A'}
+                  {event.code || 'N/A'}
                 </p>
-                {event.eventCode && (
+                {event.code && (
                   <button
                     onClick={handleCopyCode}
                     className="p-2 hover:bg-gray-100 rounded-lg transition-colors"

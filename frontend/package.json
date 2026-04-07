@@ -1,12 +1,11 @@
 {
-  "name": "waitlist-frontend",
+  "name": "@figma/my-make-file",
   "private": true,
   "version": "0.0.1",
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite",
-    "preview": "vite preview"
+    "dev": "vite"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

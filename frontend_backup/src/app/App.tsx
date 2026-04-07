@@ -15,7 +15,7 @@ import {
   logout as authLogout,
   User 
 } from './utils/auth';
-import { getStoredEvents, CapacityBasedEvent, TableBasedEvent } from './utils/events';
+import { getStoredEvents, CapacityBasedEvent, TableBasedEvent, loadEventsFromSupabase, syncEventToSupabase } from './utils/events';
 
 type Role = 'staff' | 'attendee' | null;
 type AuthScreen = 'welcome' | 'login' | 'signup' | null;
@@ -171,10 +171,17 @@ export default function App() {
     setAuthScreen('welcome');
   };
 
-  const handleLogin = (email: string, password: string) => {
-    const loggedInUser = authLogin(email, password);
+  const handleLogin = async (email: string, password: string) => {
+    localStorage.removeItem("events");
+    localStorage.removeItem("myWaitlistIds");
+    localStorage.removeItem("currentUser");
+    localStorage.removeItem("usersDb");
+    localStorage.removeItem("passwordsDb");
+    localStorage.removeItem("businessesDb");
+    const loggedInUser = await authLogin(email, password);
     if (loggedInUser) {
       setUser(loggedInUser);
+      loadEventsFromSupabase();
       setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
       setAuthScreen(null);
       toast.success(`Welcome back, ${loggedInUser.name}!`);
@@ -183,10 +190,11 @@ export default function App() {
     }
   };
 
-  const handleSignupUser = (email: string, password: string, name: string) => {
-    const newUser = authSignupUser(email, password, name);
+  const handleSignupUser = async (email: string, password: string, name: string) => {
+    const newUser = await authSignupUser(email, password, name);
     if (newUser) {
       setUser(newUser);
+      loadEventsFromSupabase();
       setSelectedRole('attendee');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}!`);
@@ -195,10 +203,11 @@ export default function App() {
     }
   };
 
-  const handleSignupBusiness = (email: string, password: string, ownerName: string, businessName: string) => {
-    const newUser = authSignupBusiness(email, password, ownerName, businessName);
+  const handleSignupBusiness = async (email: string, password: string, ownerName: string, businessName: string) => {
+    const newUser = await authSignupBusiness(email, password, ownerName, businessName);
     if (newUser) {
       setUser(newUser);
+      loadEventsFromSupabase();
       setSelectedRole('staff');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}! Your business "${businessName}" has been created.`);
@@ -252,6 +261,19 @@ export default function App() {
       reservationTime,
     };
     setWaitlist((prev) => [...prev, newEntry]);
+
+    // Sync to Supabase
+    if (eventId) {
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1'}/events/${eventId}/waitlist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name, partySize, specialRequests, type }),
+        }).catch(e => console.error('Failed to sync waitlist entry:', e));
+      }
+    }
+
     return newEntry.id;
   };
 
