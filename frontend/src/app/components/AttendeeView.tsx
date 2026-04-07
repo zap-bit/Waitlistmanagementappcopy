@@ -1729,6 +1729,25 @@ export function AttendeeView({
                       </div>
                     )}
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Special Requests <span className="text-gray-400 font-normal">(Optional)</span>
+                    </label>
+                    <textarea
+                      value={specialRequests}
+                      onChange={(e) =>{
+                        // Only update state if the value is within the limit
+                        if (e.target.value.length <= 50) {
+                          setSpecialRequests(e.target.value);
+                        }
+                      }}
+                      placeholder="e.g., 'Table 5' or 'Near Sarah Johnson'"
+                      className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                      rows={3}
+                    />
+                    <div className="text-right text-xs text-gray-400 mt-1">
+                      {specialRequests.length}/50 characters
+                    </div>
                   </div>
 
                   <button
@@ -2556,6 +2575,26 @@ export function AttendeeView({
                 </>
               )}
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Special Requests <span className="text-gray-400 font-normal">(Optional)</span>
+                </label>
+                <textarea
+                  value={specialRequests}
+                  onChange={(e) =>{
+                  // Only update state if the value is within the limit
+                  if (e.target.value.length <= 50) {
+                    setSpecialRequests(e.target.value);
+                  }
+                  }}
+                  placeholder="e.g., 'Table 5' or 'Near Sarah Johnson'"
+                  className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  rows={3}
+                />
+                <div className="text-right text-xs text-gray-400 mt-1">
+                  {specialRequests.length}/50 characters
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-3 mt-6">
