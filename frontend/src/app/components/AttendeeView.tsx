@@ -863,14 +863,19 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                     </label>
                     <textarea
                       value={specialRequests}
-                      onChange={(e) => setSpecialRequests(e.target.value)}
+                      onChange={(e) =>{
+                        // Only update state if the value is within the limit
+                        if (e.target.value.length <= 50) {
+                          setSpecialRequests(e.target.value);
+                        }
+                      }}
                       placeholder="e.g., 'Table 5' or 'Near Sarah Johnson'"
                       className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                       rows={3}
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Request a specific table number or to sit near another guest
-                    </p>
+                    <div className="text-right text-xs text-gray-400 mt-1">
+                      {specialRequests.length}/50 characters
+                    </div>
                   </div>
                 </div>
 
@@ -1336,14 +1341,19 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                 </label>
                 <textarea
                   value={specialRequests}
-                  onChange={(e) => setSpecialRequests(e.target.value)}
+                  onChange={(e) =>{
+                  // Only update state if the value is within the limit
+                  if (e.target.value.length <= 50) {
+                    setSpecialRequests(e.target.value);
+                  }
+                  }}
                   placeholder="e.g., 'Table 5' or 'Near Sarah Johnson'"
                   className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                   rows={3}
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  Request a specific table number or to sit near another guest
-                </p>
+                <div className="text-right text-xs text-gray-400 mt-1">
+                  {specialRequests.length}/50 characters
+                </div>
               </div>
             </div>
 
