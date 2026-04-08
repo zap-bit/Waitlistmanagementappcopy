@@ -264,9 +264,6 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
             <p className="text-xs text-gray-500">
               Waitlist Management System v1.0
             </p>
-            <p className="text-xs text-gray-400 mt-1">
-              Member since {new Date(user.createdAt).toLocaleDateString()}
-            </p>
           </div>
         </div>
       </div>
