@@ -206,6 +206,7 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
         status: 'active' as EventStatus,
         createdAt: new Date(e.created_at as string || Date.now()),
         archived: e.archived as boolean,
+        queues: e.event_queues || [],
       };
 
       if (e.event_type === 'TABLE') {
