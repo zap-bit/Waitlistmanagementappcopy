@@ -9,6 +9,7 @@ export interface Queue {
   capacity: number;
   currentCount: number;
   eventDateTime?: Date; // Optional date/time for this specific queue
+  manualOffset?: number; // Tracks manual additions/removals from staff dashboard
 }
 
 export interface BaseEvent {
@@ -18,6 +19,8 @@ export interface BaseEvent {
   type: EventType;
   status: EventStatus;
   createdAt: Date;
+  isPublic: boolean; // Whether the event is publicly visible or private
+  eventCode: string; // Unique code for users to join the event
   archived?: boolean;
   archivedAt?: Date;
 }
@@ -31,6 +34,7 @@ export interface CapacityBasedEvent extends BaseEvent {
   currentCount: number; // Number of people in queue/waiting (single mode)
   queues?: Queue[]; // Array of queues for multiple mode
   eventDateTime?: Date; // Optional date/time for the event
+  manualOffset?: number; // Tracks manual additions/removals for single queue mode
 }
 
 export interface TableBasedEvent extends BaseEvent {
@@ -52,6 +56,16 @@ export interface SimpleCapacityEvent extends BaseEvent {
 }
 
 export type Event = CapacityBasedEvent | TableBasedEvent | SimpleCapacityEvent;
+
+// Generate a unique event code
+export const generateEventCode = (): string => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude confusing characters
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+};
 
 // Get all events
 export const getStoredEvents = (): Event[] => {
@@ -98,6 +112,16 @@ export const updateEvent = (eventId: string, updates: Partial<Event>) => {
   const index = events.findIndex(e => e.id === eventId);
   if (index !== -1) {
     events[index] = { ...events[index], ...updates };
+    saveEvents(events);
+  }
+};
+
+// Update an event with full event object (overload)
+export const updateEventFull = (event: Event) => {
+  const events = getStoredEvents();
+  const index = events.findIndex(e => e.id === event.id);
+  if (index !== -1) {
+    events[index] = event;
     saveEvents(events);
   }
 };
@@ -150,11 +174,14 @@ export const getEventById = (eventId: string): Event | null => {
   const events = getStoredEvents();
   return events.find(e => e.id === eventId) || null;
 };
+
+// --- Backend Integration ---
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
 
 /** Syncs a locally-created event to Supabase and replaces its local ID with the
- *  returned Supabase UUID so future operations use the real ID.
- *  Returns the remote UUID on success, null on failure. */
+ * returned Supabase UUID so future operations use the real ID.
+ * Returns the remote UUID on success, null on failure. */
 export const syncEventToSupabase = async (event: Event): Promise<string | null> => {
   const token = localStorage.getItem('authToken');
   if (!token) return null;
@@ -221,6 +248,8 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
         status: 'active' as EventStatus,
         createdAt: new Date((e.created_at as string) || Date.now()),
         archived: e.archived as boolean,
+        isPublic: (e.is_public as boolean) ?? true, // Fallback if backend doesn't supply it
+        eventCode: (e.event_code as string) || generateEventCode(), // Fallback if backend doesn't supply it
         queues: e.event_queues || [],
       };
 
@@ -244,6 +273,7 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
         estimatedWaitPerPerson: (e.est_wait as number) || 5,
         location: (e.location as string) || '',
         currentCount: 0,
+        manualOffset: 0, // Default to 0 for incoming events
       } as CapacityBasedEvent;
     });
 
