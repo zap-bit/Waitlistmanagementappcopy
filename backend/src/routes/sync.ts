@@ -28,20 +28,33 @@ syncRouter.post('/', async (req, res, next) => {
       switch (op.type) {
         case 'ADD_WAITLIST': {
           if (!op.eventId) { errors.push({ localId: op.localId, error: 'eventId required' }); break; }
-          const { name, partySize, specialRequests } = op.payload as Record<string, unknown>;
+          const { name, partySize, specialRequests, type, reservationTime } = op.payload as Record<string, unknown>; // <-- ADD reservationTime here
+
           const trimmedName = String(name || '').trim();
           const size = Number(partySize);
           if (!trimmedName || !Number.isInteger(size) || size < 1) {
-            errors.push({ localId: op.localId, error: 'invalid name or partySize' });
+            errors.push({ localId: op.localId, error: 'invalid name or size' });
             break;
           }
+
+          const specialReq = specialRequests ? `${trimmedName} | ${String(specialRequests).trim()}` : trimmedName;
+
+          const { count } = await supabase.from('party').select('*', { count: 'exact', head: true }).eq('event_uuid', op.eventId);
+          const position = (count ?? 0) + 1;
+
           const { data, error } = await supabase
             .from('party')
             .insert({
               account_uuid: req.authUser!.id,
               event_uuid: op.eventId,
+              name: trimmedName,
               party_size: size,
-              special_req: [trimmedName, typeof specialRequests === 'string' ? specialRequests.trim() : ''].filter(Boolean).join(' | '),
+              special_req: specialReq,
+              type: type === 'reservation' ? 'reservation' : 'waitlist',
+              reservation_time: reservationTime ? new Date(String(reservationTime)).toISOString() : null, // <-- ADD THIS LINE
+              status: 'QUEUED',
+              position,
+              estimated_wait: 15,
             })
             .select('uuid')
             .single();

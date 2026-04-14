@@ -195,17 +195,19 @@ export default function App() {
       const { data } = await res.json() as { data: Array<Record<string, unknown>> };
       if (!Array.isArray(data)) return;
 
-      const entries: WaitlistEntry[] = data.map(p => {
+      const entries: WaitlistEntry[] = data.map((p: any) => {
         const parts = String(p.special_req || '').split(' | ');
         return {
           id: p.uuid as string,
           remoteId: p.uuid as string,
-          name: parts[0] || 'Guest',
+          name: parts[0] || p.name || 'Guest',
           partySize: (p.party_size as number) || 1,
           joinedAt: new Date((p.created_at as string) || Date.now()),
-          estimatedWait: 15,
+          estimatedWait: p.estimated_wait || 15,
           specialRequests: parts[1] || undefined,
-          type: 'waitlist' as const,
+          // Map the specific database columns here:
+          type: p.type === 'reservation' ? 'reservation' : 'waitlist',
+          reservationTime: p.reservation_time ? new Date(p.reservation_time) : undefined,
           eventId: p.event_uuid as string,
           position: p.position as number | undefined,
         };
@@ -336,7 +338,7 @@ export default function App() {
         fetch(`${API_BASE}/events/${eventId}/waitlist`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ name, partySize, specialRequests, type }),
+          body: JSON.stringify({ name, partySize, specialRequests, type, reservationTime }),
         })
           .then(r => r.ok ? r.json() : Promise.reject(r))
           .then((data: Record<string, unknown>) => {

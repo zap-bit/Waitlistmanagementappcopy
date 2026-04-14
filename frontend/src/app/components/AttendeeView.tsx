@@ -185,13 +185,13 @@ export function AttendeeView({
       const localEvents = getStoredEvents().filter(
         (e) => e.status === "active" && e.type !== "simple-capacity",
       );
-      
+
       // Merge local and server events, preferring local for same ID
       const localIds = new Set(localEvents.map(e => e.id));
       const merged = [...localEvents, ...serverEvents.filter(e => !localIds.has(e.id))];
-      
+
       setAvailableEvents(merged);
-      
+
       // If there's a selected event, refresh it with latest data
       if (selectedEvent) {
         const updatedEvent = merged.find(e => e.id === selectedEvent.id);
@@ -200,10 +200,10 @@ export function AttendeeView({
         }
       }
     };
-    
+
     // Load immediately
     loadEvents();
-    
+
     // Poll for updates every 2 seconds
     const interval = setInterval(loadEvents, 2000);
 
@@ -235,12 +235,12 @@ export function AttendeeView({
             noShowPolicy: 'Hold for 15 minutes',
             currentFilledTables: 0,
           }));
-          serverEvents = mapped.filter((e: {archived: boolean}) => !e.archived);
+          serverEvents = mapped.filter((e: { archived: boolean }) => !e.archived);
           loadEvents(); // Trigger update with new server events
         })
         .catch(e => console.error('Failed to load events:', e));
     }
-    
+
     return () => clearInterval(interval);
   }, [selectedEvent?.id]); // Re-run when selected event changes
 
@@ -282,21 +282,21 @@ export function AttendeeView({
   }, [pastEvents]);
 
   // When Supabase entries arrive (after login load or poll), sync them into myWaitlistIds
-  // and auto-select on the very first load so the user sees their status immediately.
   useEffect(() => {
     if (allWaitlistEntries.length === 0) return;
     const supabaseIds = allWaitlistEntries.map(e => e.id);
     // Merge: keep any locally-added IDs that haven't synced yet
     setMyWaitlistIds(prev => Array.from(new Set([...prev, ...supabaseIds])));
 
+    // Mark as synced, but do NOT auto-navigate so the user stays on the Welcome screen
     if (!hasSyncedFromSupabase.current) {
       hasSyncedFromSupabase.current = true;
-      // Auto-select the first (or already-selected) entry and show status
+
+      // Only keep the previously selected ID if they were already viewing one
       setSelectedWaitlistId(prev => {
         if (prev && allWaitlistEntries.find(e => e.id === prev)) return prev;
-        return supabaseIds[0];
+        return null;
       });
-      setViewingStatus(true);
     }
   }, [allWaitlistEntries]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -333,7 +333,7 @@ export function AttendeeView({
             "You";
           const partySize = parseInt(
             localStorage.getItem(`waitlist_${id}_partySize`) ||
-              "1",
+            "1",
           );
           const type =
             (localStorage.getItem(`waitlist_${id}_type`) as
@@ -373,6 +373,14 @@ export function AttendeeView({
                 },
               );
             }
+          } else {
+            // ADD THIS ELSE BLOCK to handle capacity-based events
+            toast.success(
+              `It's your turn at ${eventName}! Please head to the front.`,
+              {
+                duration: 6000,
+              },
+            );
           }
 
           // Clean up localStorage for this entry
@@ -395,7 +403,7 @@ export function AttendeeView({
   useEffect(() => {
     const pendingNotifications = JSON.parse(
       localStorage.getItem("pendingSeatedNotifications") ||
-        "[]",
+      "[]",
     );
 
     if (pendingNotifications.length > 0) {
@@ -458,17 +466,17 @@ export function AttendeeView({
   // Calculate position 
   const sameTypeAndEventEntries = myEntry
     ? allWaitlistEntries.filter(
-        (e) =>
-          e.type === myEntry.type &&
-          e.eventId === myEntry.eventId,
-      )
+      (e) =>
+        e.type === myEntry.type &&
+        e.eventId === myEntry.eventId,
+    )
     : [];
-  
+
   // Use Supabase provided position, fallback to array index calculation
   const position = myEntry?.position ?? (myEntry
     ? sameTypeAndEventEntries.findIndex(
-        (e) => e.id === selectedWaitlistId,
-      ) + 1
+      (e) => e.id === selectedWaitlistId,
+    ) + 1
     : 0);
 
   // Calculate dynamic wait time state, syncs with Supabase fetching
@@ -505,19 +513,19 @@ export function AttendeeView({
 
   // Clear stored ID if entry no longer exists in waitlist
   useEffect(() => {
-    if (selectedWaitlistId && !myEntry && hasSyncedFromSupabase.current) {
-      setMyWaitlistIds(
-        myWaitlistIds.filter((id) => id !== selectedWaitlistId),
+    if (selectedWaitlistId && !myEntry) {
+      setMyWaitlistIds((prev) =>
+        prev.filter((id) => id !== selectedWaitlistId),
       );
       setViewingStatus(false);
-      // Removed toast here as the seated logic handles it cleanly now without duplicates
+      setSelectedWaitlistId(null); // Add this to fully reset the view
     }
-  }, [selectedWaitlistId, myEntry, myWaitlistIds]);
+  }, [selectedWaitlistId, myEntry]);
 
   // Get event name for display
   const myEventName = myEntry?.eventId
     ? availableEvents.find((e) => e.id === myEntry.eventId)
-        ?.name || "Event"
+      ?.name || "Event"
     : "Event";
 
   // Get the full event object for the current entry
@@ -533,18 +541,18 @@ export function AttendeeView({
   // Get queue name for display (if applicable)
   const myQueueName = myEntry?.queueId
     ? (() => {
-        const event = availableEvents.find(
-          (e) => e.id === myEntry.eventId,
+      const event = availableEvents.find(
+        (e) => e.id === myEntry.eventId,
+      );
+      if (event && event.type === "capacity-based") {
+        const capacityEvent = event as CapacityBasedEvent;
+        const queue = capacityEvent.queues?.find(
+          (q) => q.id === myEntry.queueId,
         );
-        if (event && event.type === "capacity-based") {
-          const capacityEvent = event as CapacityBasedEvent;
-          const queue = capacityEvent.queues?.find(
-            (q) => q.id === myEntry.queueId,
-          );
-          return queue?.name;
-        }
-        return undefined;
-      })()
+        return queue?.name;
+      }
+      return undefined;
+    })()
     : undefined;
 
   // Full display name with queue if applicable
@@ -1030,228 +1038,225 @@ export function AttendeeView({
                 {/* Browse Available Events */}
                 {availableEvents.filter((e) => e.isPublic)
                   .length > 0 && (
-                  <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
-                    <h3 className="text-sm font-medium text-gray-700 mb-3">
-                      Active Events
-                    </h3>
-                    <div className="space-y-2">
-                      {availableEvents
-                        .filter((event) => event.isPublic)
-                        .map((event) => {
-                          // Calculate queue capacity status for capacity-based events
-                          let capacityBadge: {
-                            text: string;
-                            color: string;
-                          } | null = null;
-                          let isFull = false;
+                    <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
+                      <h3 className="text-sm font-medium text-gray-700 mb-3">
+                        Active Events
+                      </h3>
+                      <div className="space-y-2">
+                        {availableEvents
+                          .filter((event) => event.isPublic)
+                          .map((event) => {
+                            // Calculate queue capacity status for capacity-based events
+                            let capacityBadge: {
+                              text: string;
+                              color: string;
+                            } | null = null;
+                            let isFull = false;
 
-                          if (event.type === "capacity-based") {
-                            const capacityEvent =
-                              event as CapacityBasedEvent;
+                            if (event.type === "capacity-based") {
+                              const capacityEvent =
+                                event as CapacityBasedEvent;
 
-                            if (
-                              capacityEvent.queueMode ===
-                              "single"
-                            ) {
-                              // Single queue mode
-                              const queueCapacity =
-                                capacityEvent.capacity || 0;
-                              let currentQueueSize =
-                                allWaitlistEntries
-                                  .filter(
-                                    (e) =>
-                                      e.eventId === event.id,
-                                  )
-                                  .reduce(
-                                    (sum, e) =>
-                                      sum + e.partySize,
-                                    0,
-                                  );
-                              // Add manual offset
-                              currentQueueSize += (capacityEvent.manualOffset || 0);
+                              if (
+                                capacityEvent.queueMode ===
+                                "single"
+                              ) {
+                                // Single queue mode
+                                const queueCapacity =
+                                  capacityEvent.capacity || 0;
+                                let currentQueueSize =
+                                  allWaitlistEntries
+                                    .filter(
+                                      (e) =>
+                                        e.eventId === event.id,
+                                    )
+                                    .reduce(
+                                      (sum, e) =>
+                                        sum + e.partySize,
+                                      0,
+                                    );
+                                // Add manual offset
+                                currentQueueSize += (capacityEvent.manualOffset || 0);
 
-                              const spotsLeft =
-                                queueCapacity -
-                                currentQueueSize;
-                              const percentFilled =
-                                queueCapacity > 0
-                                  ? (currentQueueSize /
+                                const spotsLeft =
+                                  queueCapacity -
+                                  currentQueueSize;
+                                const percentFilled =
+                                  queueCapacity > 0
+                                    ? (currentQueueSize /
                                       queueCapacity) *
                                     100
-                                  : 0;
+                                    : 0;
 
-                              // Check if full
-                              if (spotsLeft <= 0) {
-                                isFull = true;
-                              }
-
-                              // Determine badge based on capacity status
-                              if (
-                                spotsLeft <= 10 &&
-                                spotsLeft > 0
-                              ) {
-                                capacityBadge = {
-                                  text: `${spotsLeft} spots left`,
-                                  color:
-                                    "bg-red-100 text-red-700",
-                                };
-                              } else if (spotsLeft == 0) {
-                                capacityBadge = {
-                                  text: "Queue Full",
-                                  color:
-                                    "bg-red-100 text-red-700",
-                                };
-                              } else if (percentFilled >= 80) {
-                                capacityBadge = {
-                                  text: "Almost Full",
-                                  color:
-                                    "bg-red-100 text-red-700",
-                                };
-                              } else if (percentFilled >= 50) {
-                                capacityBadge = {
-                                  text: "Filling Up",
-                                  color:
-                                    "bg-amber-100 text-amber-700",
-                                };
-                              }
-                            } else if (
-                              capacityEvent.queueMode === "multiple"
-                            ) {
-                              // Multi-queue mode - check if ALL queues are full
-                              const allQueues =
-                                capacityEvent.queues || [];
-                              const allQueuesFull = allQueues.every(
-                                (queue) => {
-                                  const queueCapacity =
-                                    queue.capacity;
-                                  let currentQueueSize =
-                                    allWaitlistEntries
-                                      .filter(
-                                        (e) =>
-                                          e.eventId ===
-                                            event.id &&
-                                          e.queueId === queue.id,
-                                      )
-                                      .reduce(
-                                        (sum, e) =>
-                                          sum + e.partySize,
-                                        0,
-                                      );
-                                  // Add manual offset for this queue
-                                  currentQueueSize += (queue.manualOffset || 0);
-                                  return (
-                                    queueCapacity -
-                                      currentQueueSize <=
-                                    0
-                                  );
-                                },
-                              );
-
-                              if (allQueuesFull && allQueues.length > 0) {
-                                isFull = true;
-                                capacityBadge = {
-                                  text: "All Queues Full",
-                                  color:
-                                    "bg-red-100 text-red-700",
-                                };
-                              }
-                            }
-                            // For multi-queue, we can't show a single badge since each queue has different capacity
-                          }
-
-                          return { event, capacityBadge, isFull };
-                        })
-                        .sort((a, b) => {
-                          // Sort: non-full events first, then full events
-                          if (a.isFull && !b.isFull) return 1;
-                          if (!a.isFull && b.isFull) return -1;
-                          return 0;
-                        })
-                        .map(({ event, capacityBadge, isFull }) => {
-                          return (
-                            <button
-                              key={event.id}
-                              onClick={() => {
-                                if (isFull) {
-                                  toast.error(
-                                    "This event is currently full",
-                                  );
-                                  return;
+                                // Check if full
+                                if (spotsLeft <= 0) {
+                                  isFull = true;
                                 }
-                                setSelectedEvent(event);
-                                toast.success(
-                                  `Selected: ${event.name}`,
-                                );
+
+                                // Determine badge based on capacity status
                                 if (
-                                  event.type === "table-based"
+                                  spotsLeft <= 10 &&
+                                  spotsLeft > 0
                                 ) {
-                                  setJoinType("choice");
-                                } else {
-                                  // Capacity-based event
-                                  const capacityEvent =
-                                    event as CapacityBasedEvent;
-                                  if (
-                                    capacityEvent.queueMode ===
-                                      "multiple" &&
-                                    capacityEvent.queues &&
-                                    capacityEvent.queues
-                                      .length > 0
-                                  ) {
-                                    // Multiple queues - show queue selection
-                                    setJoinType(
-                                      "queue-selection",
-                                    );
-                                  } else {
-                                    // Single queue - go directly to waitlist form
-                                    setJoinType("waitlist");
-                                  }
+                                  capacityBadge = {
+                                    text: `${spotsLeft} spots left`,
+                                    color:
+                                      "bg-red-100 text-red-700",
+                                  };
+                                } else if (spotsLeft == 0) {
+                                  capacityBadge = {
+                                    text: "Queue Full",
+                                    color:
+                                      "bg-red-100 text-red-700",
+                                  };
+                                } else if (percentFilled >= 80) {
+                                  capacityBadge = {
+                                    text: "Almost Full",
+                                    color:
+                                      "bg-red-100 text-red-700",
+                                  };
+                                } else if (percentFilled >= 50) {
+                                  capacityBadge = {
+                                    text: "Filling Up",
+                                    color:
+                                      "bg-amber-100 text-amber-700",
+                                  };
                                 }
-                              }}
-                              disabled={isFull}
-                              className={`w-full text-left p-3 border rounded-lg transition-colors ${
-                                isFull
+                              } else if (
+                                capacityEvent.queueMode === "multiple"
+                              ) {
+                                // Multi-queue mode - check if ALL queues are full
+                                const allQueues =
+                                  capacityEvent.queues || [];
+                                const allQueuesFull = allQueues.every(
+                                  (queue) => {
+                                    const queueCapacity =
+                                      queue.capacity;
+                                    let currentQueueSize =
+                                      allWaitlistEntries
+                                        .filter(
+                                          (e) =>
+                                            e.eventId ===
+                                            event.id &&
+                                            e.queueId === queue.id,
+                                        )
+                                        .reduce(
+                                          (sum, e) =>
+                                            sum + e.partySize,
+                                          0,
+                                        );
+                                    // Add manual offset for this queue
+                                    currentQueueSize += (queue.manualOffset || 0);
+                                    return (
+                                      queueCapacity -
+                                      currentQueueSize <=
+                                      0
+                                    );
+                                  },
+                                );
+
+                                if (allQueuesFull && allQueues.length > 0) {
+                                  isFull = true;
+                                  capacityBadge = {
+                                    text: "All Queues Full",
+                                    color:
+                                      "bg-red-100 text-red-700",
+                                  };
+                                }
+                              }
+                              // For multi-queue, we can't show a single badge since each queue has different capacity
+                            }
+
+                            return { event, capacityBadge, isFull };
+                          })
+                          .sort((a, b) => {
+                            // Sort: non-full events first, then full events
+                            if (a.isFull && !b.isFull) return 1;
+                            if (!a.isFull && b.isFull) return -1;
+                            return 0;
+                          })
+                          .map(({ event, capacityBadge, isFull }) => {
+                            return (
+                              <button
+                                key={event.id}
+                                onClick={() => {
+                                  if (isFull) {
+                                    toast.error(
+                                      "This event is currently full",
+                                    );
+                                    return;
+                                  }
+                                  setSelectedEvent(event);
+                                  toast.success(
+                                    `Selected: ${event.name}`,
+                                  );
+                                  if (
+                                    event.type === "table-based"
+                                  ) {
+                                    setJoinType("choice");
+                                  } else {
+                                    // Capacity-based event
+                                    const capacityEvent =
+                                      event as CapacityBasedEvent;
+                                    if (
+                                      capacityEvent.queueMode ===
+                                      "multiple" &&
+                                      capacityEvent.queues &&
+                                      capacityEvent.queues
+                                        .length > 0
+                                    ) {
+                                      // Multiple queues - show queue selection
+                                      setJoinType(
+                                        "queue-selection",
+                                      );
+                                    } else {
+                                      // Single queue - go directly to waitlist form
+                                      setJoinType("waitlist");
+                                    }
+                                  }
+                                }}
+                                disabled={isFull}
+                                className={`w-full text-left p-3 border rounded-lg transition-colors ${isFull
                                   ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed"
                                   : "border-gray-200 hover:bg-blue-50 hover:border-blue-300"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between">
-                                <div className="flex-1">
-                                  <div
-                                    className={`font-medium ${
-                                      isFull
+                                  }`}
+                              >
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div
+                                      className={`font-medium ${isFull
                                         ? "text-gray-400"
                                         : ""
-                                    }`}
-                                  >
-                                    {event.name}
-                                  </div>
-                                  <div
-                                    className={`text-xs mt-1 ${
-                                      isFull
+                                        }`}
+                                    >
+                                      {event.name}
+                                    </div>
+                                    <div
+                                      className={`text-xs mt-1 ${isFull
                                         ? "text-gray-400"
                                         : "text-gray-500"
-                                    }`}
-                                  >
-                                    {event.type ===
-                                    "capacity-based"
-                                      ? "Queue Line"
-                                      : "Table Service"}
+                                        }`}
+                                    >
+                                      {event.type ===
+                                        "capacity-based"
+                                        ? "Queue Line"
+                                        : "Table Service"}
+                                    </div>
                                   </div>
+                                  {capacityBadge && (
+                                    <div
+                                      className={`${capacityBadge.color} text-xs font-semibold px-2 py-1 rounded whitespace-nowrap ml-2`}
+                                    >
+                                      {capacityBadge.text}
+                                    </div>
+                                  )}
                                 </div>
-                                {capacityBadge && (
-                                  <div
-                                    className={`${capacityBadge.color} text-xs font-semibold px-2 py-1 rounded whitespace-nowrap ml-2`}
-                                  >
-                                    {capacityBadge.text}
-                                  </div>
-                                )}
-                              </div>
-                            </button>
-                          );
-                        })}
+                              </button>
+                            );
+                          })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* QR Code Scan Option */}
                 <button
@@ -1365,13 +1370,13 @@ export function AttendeeView({
                             );
                           // Add manual offset
                           liveCount += (queue.manualOffset || 0);
-                          
+
                           const queuePercentage =
                             (liveCount / queue.capacity) * 100;
                           const spotsLeft =
                             queue.capacity - liveCount;
                           const isFull = spotsLeft <= 0;
-                          
+
                           return {
                             queue,
                             liveCount,
@@ -1441,27 +1446,24 @@ export function AttendeeView({
                                 );
                               }}
                               disabled={isFull}
-                              className={`w-full text-left p-4 border-2 rounded-xl transition-all ${
-                                isFull
-                                  ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed"
-                                  : "border-gray-200 hover:bg-blue-50 hover:border-blue-400"
-                              }`}
+                              className={`w-full text-left p-4 border-2 rounded-xl transition-all ${isFull
+                                ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed"
+                                : "border-gray-200 hover:bg-blue-50 hover:border-blue-400"
+                                }`}
                             >
                               <div className="flex items-start justify-between mb-2">
                                 <div
-                                  className={`font-semibold text-lg ${
-                                    isFull ? "text-gray-400" : ""
-                                  }`}
+                                  className={`font-semibold text-lg ${isFull ? "text-gray-400" : ""
+                                    }`}
                                 >
                                   {queue.name}
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div
-                                    className={`text-sm font-medium ${
-                                      isFull
-                                        ? "text-gray-400"
-                                        : getQueueColor()
-                                    }`}
+                                    className={`text-sm font-medium ${isFull
+                                      ? "text-gray-400"
+                                      : getQueueColor()
+                                      }`}
                                   >
                                     {Math.round(queuePercentage)}%
                                   </div>
@@ -1475,11 +1477,10 @@ export function AttendeeView({
                                 </div>
                               </div>
                               <div
-                                className={`flex items-center gap-2 text-sm mb-2 ${
-                                  isFull
-                                    ? "text-gray-400"
-                                    : "text-gray-600"
-                                }`}
+                                className={`flex items-center gap-2 text-sm mb-2 ${isFull
+                                  ? "text-gray-400"
+                                  : "text-gray-600"
+                                  }`}
                               >
                                 <Users className="w-4 h-4" />
                                 <span>
@@ -1487,23 +1488,22 @@ export function AttendeeView({
                                   in queue
                                 </span>
                               </div>
-                            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                              <div
-                                className={`h-full transition-all ${
-                                  queuePercentage < 50
+                              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full transition-all ${queuePercentage < 50
                                     ? "bg-green-500"
                                     : queuePercentage < 80
                                       ? "bg-amber-500"
                                       : "bg-red-500"
-                                }`}
-                                style={{
-                                  width: `${Math.min(queuePercentage, 100)}%`,
-                                }}
-                              />
-                            </div>
-                          </button>
-                        );
-                      })}
+                                    }`}
+                                  style={{
+                                    width: `${Math.min(queuePercentage, 100)}%`,
+                                  }}
+                                />
+                              </div>
+                            </button>
+                          );
+                        })}
                     </div>
                   </div>
 
@@ -1546,11 +1546,10 @@ export function AttendeeView({
                   <button
                     onClick={() => setJoinType("reservation")}
                     disabled={allTablesOccupied}
-                    className={`w-full py-6 px-6 rounded-xl font-semibold flex flex-col items-center justify-center gap-2 shadow-lg active:scale-95 transition-transform ${
-                      allTablesOccupied
-                        ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                        : "bg-green-600 hover:bg-green-700 text-white"
-                    }`}
+                    className={`w-full py-6 px-6 rounded-xl font-semibold flex flex-col items-center justify-center gap-2 shadow-lg active:scale-95 transition-transform ${allTablesOccupied
+                      ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                      : "bg-green-600 hover:bg-green-700 text-white"
+                      }`}
                   >
                     <Calendar className="w-8 h-8" />
                     <span className="text-lg">
@@ -1645,59 +1644,59 @@ export function AttendeeView({
                         max={
                           selectedEvent.type ===
                             "capacity-based" &&
-                          joinType === "waitlist"
+                            joinType === "waitlist"
                             ? (() => {
-                                const capacityEvent =
-                                  selectedEvent as CapacityBasedEvent;
-                                let queueCapacity = 0;
-                                let currentQueueSize = 0;
+                              const capacityEvent =
+                                selectedEvent as CapacityBasedEvent;
+                              let queueCapacity = 0;
+                              let currentQueueSize = 0;
 
-                                if (
-                                  capacityEvent.queueMode ===
-                                  "single"
-                                ) {
-                                  queueCapacity =
-                                    capacityEvent.capacity || 0;
-                                  currentQueueSize =
-                                    allWaitlistEntries
-                                      .filter(
-                                        (e) =>
-                                          e.eventId ===
-                                          selectedEvent.id,
-                                      )
-                                      .reduce(
-                                        (sum, e) =>
-                                          sum + e.partySize,
-                                        0,
-                                      );
-                                  // Add manual offset
-                                  currentQueueSize += (capacityEvent.manualOffset || 0);
-                                } else if (selectedQueue) {
-                                  queueCapacity =
-                                    selectedQueue.capacity;
-                                  currentQueueSize =
-                                    allWaitlistEntries
-                                      .filter(
-                                        (e) =>
-                                          e.eventId ===
-                                            selectedEvent.id &&
-                                          e.queueId ===
-                                            selectedQueue.id,
-                                      )
-                                      .reduce(
-                                        (sum, e) =>
-                                          sum + e.partySize,
-                                        0,
-                                      );
-                                  // Add manual offset for this queue
-                                  currentQueueSize += (selectedQueue.manualOffset || 0);
-                                }
+                              if (
+                                capacityEvent.queueMode ===
+                                "single"
+                              ) {
+                                queueCapacity =
+                                  capacityEvent.capacity || 0;
+                                currentQueueSize =
+                                  allWaitlistEntries
+                                    .filter(
+                                      (e) =>
+                                        e.eventId ===
+                                        selectedEvent.id,
+                                    )
+                                    .reduce(
+                                      (sum, e) =>
+                                        sum + e.partySize,
+                                      0,
+                                    );
+                                // Add manual offset
+                                currentQueueSize += (capacityEvent.manualOffset || 0);
+                              } else if (selectedQueue) {
+                                queueCapacity =
+                                  selectedQueue.capacity;
+                                currentQueueSize =
+                                  allWaitlistEntries
+                                    .filter(
+                                      (e) =>
+                                        e.eventId ===
+                                        selectedEvent.id &&
+                                        e.queueId ===
+                                        selectedQueue.id,
+                                    )
+                                    .reduce(
+                                      (sum, e) =>
+                                        sum + e.partySize,
+                                      0,
+                                    );
+                                // Add manual offset for this queue
+                                currentQueueSize += (selectedQueue.manualOffset || 0);
+                              }
 
-                                return (
-                                  queueCapacity -
-                                  currentQueueSize
-                                );
-                              })()
+                              return (
+                                queueCapacity -
+                                currentQueueSize
+                              );
+                            })()
                             : undefined
                         }
                         value={partySize}
@@ -1742,9 +1741,9 @@ export function AttendeeView({
                                 .filter(
                                   (e) =>
                                     e.eventId ===
-                                      selectedEvent.id &&
+                                    selectedEvent.id &&
                                     e.queueId ===
-                                      selectedQueue.id,
+                                    selectedQueue.id,
                                 )
                                 .reduce(
                                   (sum, e) => sum + e.partySize,
@@ -1917,20 +1916,20 @@ export function AttendeeView({
                       // Get queue name if applicable
                       const queueName = entry.queueId
                         ? (() => {
-                            if (
-                              event &&
-                              event.type === "capacity-based"
-                            ) {
-                              const capacityEvent =
-                                event as CapacityBasedEvent;
-                              const queue =
-                                capacityEvent.queues?.find(
-                                  (q) => q.id === entry.queueId,
-                                );
-                              return queue?.name;
-                            }
-                            return undefined;
-                          })()
+                          if (
+                            event &&
+                            event.type === "capacity-based"
+                          ) {
+                            const capacityEvent =
+                              event as CapacityBasedEvent;
+                            const queue =
+                              capacityEvent.queues?.find(
+                                (q) => q.id === entry.queueId,
+                              );
+                            return queue?.name;
+                          }
+                          return undefined;
+                        })()
                         : undefined;
 
                       const fullDisplayName = queueName
@@ -1965,11 +1964,10 @@ export function AttendeeView({
               )}
 
               <div
-                className={`w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-6 ${
-                  myEntry?.type === "reservation"
-                    ? "bg-green-100"
-                    : "bg-blue-100"
-                }`}
+                className={`w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-6 ${myEntry?.type === "reservation"
+                  ? "bg-green-100"
+                  : "bg-blue-100"
+                  }`}
               >
                 <div className="text-center">
                   {myEntry?.type === "reservation" ? (
@@ -2074,8 +2072,8 @@ export function AttendeeView({
               <div
                 className={
                   myEntry?.type === "waitlist" ||
-                  (myEntry?.type === "reservation" &&
-                    myEntry?.reservationTime)
+                    (myEntry?.type === "reservation" &&
+                      myEntry?.reservationTime)
                     ? "pt-0"
                     : ""
                 }
@@ -2110,11 +2108,10 @@ export function AttendeeView({
             </div>
 
             <div
-              className={`border rounded-xl p-4 text-sm ${
-                myEntry?.type === "reservation"
-                  ? "bg-green-50 border-green-200 text-green-800"
-                  : "bg-blue-50 border-blue-200 text-blue-800"
-              }`}
+              className={`border rounded-xl p-4 text-sm ${myEntry?.type === "reservation"
+                ? "bg-green-50 border-green-200 text-green-800"
+                : "bg-blue-50 border-blue-200 text-blue-800"
+                }`}
             >
               <p className="text-center">
                 {myEntry?.type === "reservation"
@@ -2265,20 +2262,20 @@ export function AttendeeView({
                     // Get queue name if applicable
                     const queueName = entry.queueId
                       ? (() => {
-                          if (
-                            event &&
-                            event.type === "capacity-based"
-                          ) {
-                            const capacityEvent =
-                              event as CapacityBasedEvent;
-                            const queue =
-                              capacityEvent.queues?.find(
-                                (q) => q.id === entry.queueId,
-                              );
-                            return queue?.name;
-                          }
-                          return undefined;
-                        })()
+                        if (
+                          event &&
+                          event.type === "capacity-based"
+                        ) {
+                          const capacityEvent =
+                            event as CapacityBasedEvent;
+                          const queue =
+                            capacityEvent.queues?.find(
+                              (q) => q.id === entry.queueId,
+                            );
+                          return queue?.name;
+                        }
+                        return undefined;
+                      })()
                       : undefined;
 
                     const fullDisplayName = queueName
@@ -2361,7 +2358,7 @@ export function AttendeeView({
                       const percentFilled =
                         queueCapacity > 0
                           ? (currentQueueSize / queueCapacity) *
-                            100
+                          100
                           : 0;
 
                       // Determine badge based on capacity status

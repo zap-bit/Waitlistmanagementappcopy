@@ -281,17 +281,19 @@ export function StaffDashboard({
         .then(r => r.ok ? r.json() : Promise.reject(r))
         .then((data: { waitlist: Array<Record<string, unknown>>; tables: Array<Record<string, unknown>> }) => {
           if (Array.isArray(data.waitlist)) {
-            const entries = data.waitlist.map(p => {
+            const entries = data.waitlist.map((p: any) => {
               const parts = String(p.special_req || '').split(' | ');
               return {
                 id: p.uuid as string,
                 remoteId: p.uuid as string,
-                name: parts[0] || 'Guest',
+                name: parts[0] || p.name || 'Guest',
                 partySize: (p.party_size as number) || 1,
                 joinedAt: new Date((p.created_at as string) || Date.now()),
-                estimatedWait: 15,
+                estimatedWait: p.estimated_wait || 15,
                 specialRequests: parts[1] || undefined,
-                type: 'waitlist' as const,
+                // Map the specific database columns here:
+                type: p.type === 'reservation' ? 'reservation' : 'waitlist',
+                reservationTime: p.reservation_time ? new Date(p.reservation_time) : undefined,
                 eventId,
               };
             });
@@ -345,7 +347,7 @@ export function StaffDashboard({
         if (
           updatedEvent &&
           JSON.stringify(updatedEvent) !==
-            JSON.stringify(selectedEvent)
+          JSON.stringify(selectedEvent)
         ) {
           setSelectedEvent(updatedEvent);
         }
@@ -560,8 +562,8 @@ export function StaffDashboard({
       if (
         occupiedTableWithGuest &&
         occupiedTableWithGuest.capacity >=
-          (occupiedTableWithGuest.partySize || 0) +
-            entry.partySize
+        (occupiedTableWithGuest.partySize || 0) +
+        entry.partySize
       ) {
         toast.success(
           `Seating ${entry.name} with ${occupiedTableWithGuest.guestName}!`,
@@ -734,17 +736,17 @@ export function StaffDashboard({
       const updatedTables = tables.map((t) =>
         t.id === availableTable.id
           ? {
-              ...t,
-              occupied: true,
-              guestName: isJoiningExistingParty
-                ? `${availableTable.guestName} & ${entry.name}`
-                : entry.name,
-              partySize: isJoiningExistingParty
-                ? (availableTable.partySize || 0) +
-                  entry.partySize
-                : entry.partySize,
-              seatedAt: availableTable.seatedAt || new Date(),
-            }
+            ...t,
+            occupied: true,
+            guestName: isJoiningExistingParty
+              ? `${availableTable.guestName} & ${entry.name}`
+              : entry.name,
+            partySize: isJoiningExistingParty
+              ? (availableTable.partySize || 0) +
+              entry.partySize
+              : entry.partySize,
+            seatedAt: availableTable.seatedAt || new Date(),
+          }
           : t,
       );
 
@@ -779,6 +781,20 @@ export function StaffDashboard({
         );
       }
       simulateSync();
+
+      // --- NEW: Tell Supabase they were seated ---
+      const token = localStorage.getItem('authToken');
+      if (token && selectedEvent) {
+        fetch(`${API_BASE}/events/${selectedEvent.id}/staff/seat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ entryId: id, tableId: availableTable.id })
+        }).catch(err => console.error('Failed to sync seating to server:', err));
+      }
+
     } else {
       toast.error("No available tables for this party size", {
         description: `Need table for ${entry.partySize} guests`,
@@ -816,7 +832,7 @@ export function StaffDashboard({
               : entry.name,
             partySize: isJoiningExistingParty
               ? (availableTable.partySize || 0) +
-                entry.partySize
+              entry.partySize
               : entry.partySize,
             seatedAt: availableTable.seatedAt || new Date(),
           };
@@ -826,6 +842,20 @@ export function StaffDashboard({
           if (entryIndex !== -1) {
             newWaitlist.splice(entryIndex, 1);
             seatedCount++;
+
+            // --- NEW: Tell Supabase this specific reservation was seated ---
+            const token = localStorage.getItem('authToken');
+            if (token && selectedEvent) {
+              fetch(`${API_BASE}/events/${selectedEvent.id}/staff/seat`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ entryId: entry.id, tableId: availableTable.id })
+              }).catch(err => console.error('Failed to sync seat-all to server:', err));
+            }
+            // ---------------------------------------------------------------
           }
         }
       }
@@ -867,6 +897,17 @@ export function StaffDashboard({
     setWaitlist(waitlist.filter((e) => e.id !== id));
     toast.error(`${entry.name} marked as no-show`);
     simulateSync();
+
+    // --- NEW: Tell Supabase to delete the entry ---
+    const token = localStorage.getItem('authToken');
+    if (token && selectedEvent) {
+      fetch(`${API_BASE}/events/${selectedEvent.id}/waitlist/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      }).catch(err => console.error('Failed to remove no-show from server:', err));
+    }
+    // ----------------------------------------------
+
   };
 
   const handleClearTable = (tableId: number) => {
@@ -876,12 +917,12 @@ export function StaffDashboard({
     const updatedTables = tables.map((t) =>
       t.id === tableId
         ? {
-            ...t,
-            occupied: false,
-            guestName: undefined,
-            partySize: undefined,
-            seatedAt: undefined,
-          }
+          ...t,
+          occupied: false,
+          guestName: undefined,
+          partySize: undefined,
+          seatedAt: undefined,
+        }
         : t,
     );
 
@@ -986,12 +1027,12 @@ export function StaffDashboard({
     const updatedTables = tables.map((t) =>
       t.id === tableId
         ? {
-            ...t,
-            occupied: true,
-            guestName,
-            partySize,
-            seatedAt: new Date(),
-          }
+          ...t,
+          occupied: true,
+          guestName,
+          partySize,
+          seatedAt: new Date(),
+        }
         : t,
     );
 
@@ -1105,9 +1146,9 @@ export function StaffDashboard({
                   ? waitlistSubPage === "settings"
                     ? "Table Settings"
                     : selectedEvent?.name ||
-                      "Waitlist Management"
+                    "Waitlist Management"
                   : selectedEvent?.name ||
-                    "Capacity Management"}
+                  "Capacity Management"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1135,11 +1176,10 @@ export function StaffDashboard({
               setCurrentPage("home");
               setMenuOpen(false);
             }}
-            className={`w-full p-4 text-left hover:bg-gray-100 transition-colors ${
-              currentPage === "home"
-                ? "bg-blue-50 border-l-4 border-blue-600"
-                : ""
-            }`}
+            className={`w-full p-4 text-left hover:bg-gray-100 transition-colors ${currentPage === "home"
+              ? "bg-blue-50 border-l-4 border-blue-600"
+              : ""
+              }`}
           >
             <div className="font-semibold">Dashboard</div>
           </button>
@@ -1148,11 +1188,10 @@ export function StaffDashboard({
               setCurrentPage("archived");
               setMenuOpen(false);
             }}
-            className={`w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200 ${
-              currentPage === "archived"
-                ? "bg-blue-50 border-l-4 border-blue-600"
-                : ""
-            }`}
+            className={`w-full p-4 text-left hover:bg-gray-100 transition-colors border-t border-gray-200 ${currentPage === "archived"
+              ? "bg-blue-50 border-l-4 border-blue-600"
+              : ""
+              }`}
           >
             <div className="flex items-center gap-2">
               <Archive className="w-5 h-5" />
@@ -1253,48 +1292,55 @@ export function StaffDashboard({
                   const currentCount =
                     event.type === "capacity-based"
                       ? (() => {
-                          const capacityEvent =
-                            event as CapacityBasedEvent;
-                          if (
-                            capacityEvent.queueMode ===
-                            "multiple"
-                          ) {
-                            // For multiple queues, count entries that match any queue in this event
-                            const queueIds =
-                              capacityEvent.queues?.map(
-                                (q) => q.id,
-                              ) || [];
-                            return waitlist.filter(
-                              (e) =>
-                                e.queueId &&
-                                queueIds.includes(e.queueId),
-                            ).length;
-                          } else {
-                            // For single queue, count entries with matching eventId
-                            return waitlist.filter(
-                              (e) => e.eventId === event.id,
-                            ).length;
-                          }
-                        })()
+                        const capacityEvent =
+                          event as CapacityBasedEvent;
+                        if (
+                          capacityEvent.queueMode ===
+                          "multiple"
+                        ) {
+                          // For multiple queues, count entries that match any queue in this event
+                          const queueIds =
+                            capacityEvent.queues?.map(
+                              (q) => q.id,
+                            ) || [];
+                          return waitlist.filter(
+                            (e) =>
+                              e.queueId &&
+                              queueIds.includes(e.queueId),
+                          ).length;
+                        } else {
+                          // For single queue, count entries with matching eventId
+                          return waitlist.filter(
+                            (e) => e.eventId === event.id,
+                          ).length;
+                        }
+                      })()
                       : event.type === "simple-capacity"
                         ? (event as SimpleCapacityEvent)
-                            .currentCount
-                        : event.currentFilledTables;
+                          .currentCount
+                        : (() => {
+                          // Dynamically read from the stored tables instead of the static event property
+                          const savedTables = loadEventTables(event.id);
+                          if (savedTables) {
+                            return savedTables.filter((t) => t.occupied).length;
+                          }
+                          return event.currentFilledTables || 0;
+                        })();
 
                   const maxCount =
                     event.type === "capacity-based"
                       ? (event as CapacityBasedEvent)
-                          .queueMode === "multiple"
+                        .queueMode === "multiple"
                         ? (
-                            event as CapacityBasedEvent
-                          ).queues?.reduce(
-                            (sum, q) => sum + q.capacity,
-                            0,
-                          ) || 0
+                          event as CapacityBasedEvent
+                        ).queues?.reduce(
+                          (sum, q) => sum + q.capacity,
+                          0,
+                        ) || 0
                         : event.capacity || 0
                       : event.type === "simple-capacity"
                         ? (event as SimpleCapacityEvent)
-                            .capacity
+                          .capacity
                         : event.numberOfTables || 0;
 
                   return (
@@ -1313,11 +1359,10 @@ export function StaffDashboard({
                             event.status.slice(1)}
                         </span>
                         <span
-                          className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 ${
-                            event.isPublic
-                              ? "bg-blue-100 text-blue-700"
-                              : "bg-gray-100 text-gray-700"
-                          }`}
+                          className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 ${event.isPublic
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-gray-100 text-gray-700"
+                            }`}
                         >
                           {event.isPublic ? (
                             <>
@@ -1396,7 +1441,7 @@ export function StaffDashboard({
                             if (
                               existingTables &&
                               existingTables.length ===
-                                newTableCount
+                              newTableCount
                             ) {
                               // Use existing tables if they match the event configuration
                               setTables(existingTables);
@@ -1450,7 +1495,7 @@ export function StaffDashboard({
 
                           {/* Event Info */}
                           <div className="flex-1 min-w-0">
-                            <h3 className="text-xl font-bold text-gray-800 mb-2 pr-70 whitespace-nowrap overflow-hidden text-ellipsis">
+                            <h3 className="text-xl font-bold text-gray-800 mb-2 pr-4 whitespace-nowrap overflow-hidden text-ellipsis">
                               {event.name}
                             </h3>
                             <div className="flex items-center gap-3 flex-wrap">
@@ -1458,7 +1503,7 @@ export function StaffDashboard({
                                 {event.type === "capacity-based"
                                   ? "Capacity-Based"
                                   : event.type ===
-                                      "simple-capacity"
+                                    "simple-capacity"
                                     ? "Attendance Tracker"
                                     : "Table-Based"}
                               </span>
@@ -1469,7 +1514,7 @@ export function StaffDashboard({
                           <div className="flex items-center gap-6">
                             <div className="text-right">
                               {event.type ===
-                              "capacity-based" ? (
+                                "capacity-based" ? (
                                 <div className="text-base font-semibold text-gray-800">
                                   {(event as CapacityBasedEvent)
                                     .queueMode === "single"
@@ -1486,7 +1531,7 @@ export function StaffDashboard({
                                   </div>
                                   <div className="text-xs text-gray-500">
                                     {event.type ===
-                                    "table-based"
+                                      "table-based"
                                       ? "Tables Filled"
                                       : "Current Count"}
                                   </div>
@@ -1544,48 +1589,48 @@ export function StaffDashboard({
                   const currentCount =
                     event.type === "capacity-based"
                       ? (() => {
-                          const capacityEvent =
-                            event as CapacityBasedEvent;
-                          if (
-                            capacityEvent.queueMode ===
-                            "multiple"
-                          ) {
-                            // For multiple queues, count entries that match any queue in this event
-                            const queueIds =
-                              capacityEvent.queues?.map(
-                                (q) => q.id,
-                              ) || [];
-                            return waitlist.filter(
-                              (e) =>
-                                e.queueId &&
-                                queueIds.includes(e.queueId),
-                            ).length;
-                          } else {
-                            // For single queue, count entries with matching eventId
-                            return waitlist.filter(
-                              (e) => e.eventId === event.id,
-                            ).length;
-                          }
-                        })()
+                        const capacityEvent =
+                          event as CapacityBasedEvent;
+                        if (
+                          capacityEvent.queueMode ===
+                          "multiple"
+                        ) {
+                          // For multiple queues, count entries that match any queue in this event
+                          const queueIds =
+                            capacityEvent.queues?.map(
+                              (q) => q.id,
+                            ) || [];
+                          return waitlist.filter(
+                            (e) =>
+                              e.queueId &&
+                              queueIds.includes(e.queueId),
+                          ).length;
+                        } else {
+                          // For single queue, count entries with matching eventId
+                          return waitlist.filter(
+                            (e) => e.eventId === event.id,
+                          ).length;
+                        }
+                      })()
                       : event.type === "simple-capacity"
                         ? (event as SimpleCapacityEvent)
-                            .currentCount
+                          .currentCount
                         : event.currentFilledTables;
 
                   const maxCount =
                     event.type === "capacity-based"
                       ? (event as CapacityBasedEvent)
-                          .queueMode === "multiple"
+                        .queueMode === "multiple"
                         ? (
-                            event as CapacityBasedEvent
-                          ).queues?.reduce(
-                            (sum, q) => sum + q.capacity,
-                            0,
-                          ) || 0
+                          event as CapacityBasedEvent
+                        ).queues?.reduce(
+                          (sum, q) => sum + q.capacity,
+                          0,
+                        ) || 0
                         : event.capacity || 0
                       : event.type === "simple-capacity"
                         ? (event as SimpleCapacityEvent)
-                            .capacity
+                          .capacity
                         : event.numberOfTables || 0;
 
                   return (
@@ -1599,11 +1644,10 @@ export function StaffDashboard({
                           Archived
                         </span>
                         <span
-                          className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 ${
-                            event.isPublic
-                              ? "bg-blue-100 text-blue-700"
-                              : "bg-gray-100 text-gray-700"
-                          }`}
+                          className={`text-xs px-2.5 py-1 rounded-full font-medium flex items-center gap-1 ${event.isPublic
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-gray-100 text-gray-700"
+                            }`}
                         >
                           {event.isPublic ? (
                             <>
@@ -1668,7 +1712,7 @@ export function StaffDashboard({
                                 method: 'PATCH',
                                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                                 body: JSON.stringify({ archived: false }),
-                              }).catch(() => {/* silently ignore — localStorage already updated */});
+                              }).catch(() => {/* silently ignore — localStorage already updated */ });
                             }
                             setEvents(
                               getActiveEvents().filter(
@@ -1759,32 +1803,32 @@ export function StaffDashboard({
                 // Get live waitlist count
                 const liveWaitlistCount = selectedEvent
                   ? waitlist
-                      .filter((e) => {
-                        // Filter by event ID
-                        if (e.eventId !== selectedEvent.id)
-                          return false;
+                    .filter((e) => {
+                      // Filter by event ID
+                      if (e.eventId !== selectedEvent.id)
+                        return false;
 
-                        // For multi-queue capacity events, also filter by queue ID
-                        const isSingleQueue =
-                          selectedEvent.type ===
-                            "capacity-based" &&
-                          (selectedEvent as CapacityBasedEvent)
-                            .queueMode === "single";
+                      // For multi-queue capacity events, also filter by queue ID
+                      const isSingleQueue =
+                        selectedEvent.type ===
+                        "capacity-based" &&
+                        (selectedEvent as CapacityBasedEvent)
+                          .queueMode === "single";
 
-                        if (
-                          !isSingleQueue &&
-                          attraction.id !==
-                            "default-single-queue"
-                        ) {
-                          return e.queueId === attraction.id;
-                        }
+                      if (
+                        !isSingleQueue &&
+                        attraction.id !==
+                        "default-single-queue"
+                      ) {
+                        return e.queueId === attraction.id;
+                      }
 
-                        return true;
-                      })
-                      .reduce(
-                        (sum, entry) => sum + entry.partySize,
-                        0,
-                      )
+                      return true;
+                    })
+                    .reduce(
+                      (sum, entry) => sum + entry.partySize,
+                      0,
+                    )
                   : 0;
 
                 // Get manual offset from event data
@@ -1826,9 +1870,9 @@ export function StaffDashboard({
                 const displayWaitTime =
                   attraction.autoCalculateWait
                     ? calculateWaitTime(
-                        actualQueueSize,
-                        attraction.throughput,
-                      )
+                      actualQueueSize,
+                      attraction.throughput,
+                    )
                     : attraction.waitTime;
 
                 const isSingleQueueEvent =
@@ -1849,14 +1893,13 @@ export function StaffDashboard({
                         </h3>
                         <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
                           <span
-                            className={`inline-block w-2 h-2 rounded-full ${
-                              attraction.status === "open"
-                                ? "bg-green-500"
-                                : attraction.status ===
-                                    "delayed"
-                                  ? "bg-amber-500"
-                                  : "bg-red-500"
-                            }`}
+                            className={`inline-block w-2 h-2 rounded-full ${attraction.status === "open"
+                              ? "bg-green-500"
+                              : attraction.status ===
+                                "delayed"
+                                ? "bg-amber-500"
+                                : "bg-red-500"
+                              }`}
                           />
                           {attraction.status
                             .charAt(0)
@@ -1945,12 +1988,12 @@ export function StaffDashboard({
                                   attractions.map((a) =>
                                     a.id === attraction.id
                                       ? {
-                                          ...a,
-                                          waitTime: Math.max(
-                                            0,
-                                            a.waitTime - 5,
-                                          ),
-                                        }
+                                        ...a,
+                                        waitTime: Math.max(
+                                          0,
+                                          a.waitTime - 5,
+                                        ),
+                                      }
                                       : a,
                                   ),
                                 );
@@ -1969,10 +2012,10 @@ export function StaffDashboard({
                                   attractions.map((a) =>
                                     a.id === attraction.id
                                       ? {
-                                          ...a,
-                                          waitTime:
-                                            a.waitTime + 5,
-                                        }
+                                        ...a,
+                                        waitTime:
+                                          a.waitTime + 5,
+                                      }
                                       : a,
                                   ),
                                 );
@@ -1998,7 +2041,7 @@ export function StaffDashboard({
                                 if (
                                   !selectedEvent ||
                                   selectedEvent.type !==
-                                    "capacity-based"
+                                  "capacity-based"
                                 )
                                   return;
 
@@ -2029,10 +2072,10 @@ export function StaffDashboard({
                                       (q) =>
                                         q.id === attraction.id
                                           ? {
-                                              ...q,
-                                              manualOffset:
-                                                newOffset,
-                                            }
+                                            ...q,
+                                            manualOffset:
+                                              newOffset,
+                                          }
                                           : q,
                                     );
                                   updateEvent(
@@ -2072,7 +2115,7 @@ export function StaffDashboard({
                                 if (
                                   !selectedEvent ||
                                   selectedEvent.type !==
-                                    "capacity-based"
+                                  "capacity-based"
                                 )
                                   return;
 
@@ -2106,10 +2149,10 @@ export function StaffDashboard({
                                       (q) =>
                                         q.id === attraction.id
                                           ? {
-                                              ...q,
-                                              manualOffset:
-                                                newOffset,
-                                            }
+                                            ...q,
+                                            manualOffset:
+                                              newOffset,
+                                          }
                                           : q,
                                     );
                                   updateEvent(
@@ -2184,9 +2227,9 @@ export function StaffDashboard({
                               attractions.map((a) =>
                                 a.id === attraction.id
                                   ? {
-                                      ...a,
-                                      autoCalculateWait: false,
-                                    }
+                                    ...a,
+                                    autoCalculateWait: false,
+                                  }
                                   : a,
                               ),
                             );
@@ -2203,9 +2246,9 @@ export function StaffDashboard({
                               attractions.map((a) =>
                                 a.id === attraction.id
                                   ? {
-                                      ...a,
-                                      autoCalculateWait: true,
-                                    }
+                                    ...a,
+                                    autoCalculateWait: true,
+                                  }
                                   : a,
                               ),
                             );
@@ -2263,12 +2306,12 @@ export function StaffDashboard({
                       name: formData.get("name") as string,
                       waitTime: autoCalculateWait
                         ? calculateWaitTime(
-                            queueSize,
-                            throughput,
-                          )
+                          queueSize,
+                          throughput,
+                        )
                         : parseInt(
-                            formData.get("waitTime") as string,
-                          ),
+                          formData.get("waitTime") as string,
+                        ),
                       queueSize,
                       queueCapacity: parseInt(
                         formData.get("queueCapacity") as string,
@@ -2679,11 +2722,10 @@ export function StaffDashboard({
             <div className="flex gap-3 mb-4">
               <button
                 onClick={() => setListView("reservation")}
-                className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${
-                  listView === "reservation"
-                    ? "bg-black text-white shadow-lg"
-                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${listView === "reservation"
+                  ? "bg-black text-white shadow-lg"
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  }`}
               >
                 Reservation List (
                 {
@@ -2697,11 +2739,10 @@ export function StaffDashboard({
               </button>
               <button
                 onClick={() => setListView("waitlist")}
-                className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${
-                  listView === "waitlist"
-                    ? "bg-black text-white shadow-lg"
-                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${listView === "waitlist"
+                  ? "bg-black text-white shadow-lg"
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  }`}
               >
                 Live Waitlist (
                 {
@@ -2857,10 +2898,10 @@ export function StaffDashboard({
                                       withGuestMatch ||
                                       nearGuestMatch ||
                                       hasPreference) && (
-                                      <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold">
-                                        Action Required
-                                      </span>
-                                    )}
+                                        <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold">
+                                          Action Required
+                                        </span>
+                                      )}
                                   </div>
                                   <div className="text-sm text-blue-800 break-words overflow-hidden whitespace-pre-wrap">
                                     {entry.specialRequests}
@@ -3207,7 +3248,7 @@ export function StaffDashboard({
                       fetch(`${API_BASE}/events/${eventToDelete.id}`, {
                         method: 'DELETE',
                         headers: { Authorization: `Bearer ${token}` },
-                      }).catch(() => {/* silently ignore — localStorage already updated */});
+                      }).catch(() => {/* silently ignore — localStorage already updated */ });
                     }
                     // Refresh events
                     setEvents(
