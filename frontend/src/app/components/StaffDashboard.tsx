@@ -107,6 +107,8 @@ const loadEventTables = (eventId: string): Table[] | null => {
   return null;
 };
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
+
 export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTables, user }: StaffDashboardProps) {
   const [currentCapacity, setCurrentCapacity] = useState(() => getStoredNumber('currentCapacity', 45));
   const [maxCapacity, setMaxCapacity] = useState(() => getStoredNumber('maxCapacity', 100));
@@ -149,44 +151,98 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   }, [currentPage, user.businessId]);
 
-  // Auto-create default line for single-queue events
+  // Load and poll the selected event's waitlist + tables from Supabase every 10 s
   useEffect(() => {
-    if (selectedEvent && selectedEvent.type === 'capacity-based') {
-      const capacityEvent = selectedEvent as CapacityBasedEvent;
-      if (capacityEvent.queueMode === 'single' && attractions.length === 0) {
-        // Create a default line with the same name as the event
-        const defaultLine: Attraction = {
-          id: 'default-single-queue',
-          name: selectedEvent.name,
-          waitTime: capacityEvent.estimatedWaitPerPerson || 30,
-          queueSize: capacityEvent.currentCount || 0,
-          queueCapacity: capacityEvent.capacity || 100,
-          throughput: 240, // default throughput
-          status: 'open',
-          autoCalculateWait: true,
-        };
-        setAttractions([defaultLine]);
-      } else if (capacityEvent.queueMode === 'multiple') {
-        // Load queues from the event if they exist
-        if (capacityEvent.queues && capacityEvent.queues.length > 0) {
-          const attractionsFromQueues: Attraction[] = capacityEvent.queues.map(queue => ({
-            id: queue.id,
-            name: queue.name,
-            waitTime: capacityEvent.estimatedWaitPerPerson || 30,
-            queueSize: queue.currentCount || 0,
-            queueCapacity: queue.capacity,
-            throughput: 240, // default throughput
-            status: 'open',
-            autoCalculateWait: true,
-          }));
-          setAttractions(attractionsFromQueues);
-        } else if (attractions.length === 0) {
-          // No queues defined yet, start with empty
-          setAttractions([]);
-        }
-      }
+    if (!selectedEvent) return;
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
+    const eventId = selectedEvent.id;
+
+    const fetchDashboard = () => {
+      fetch(`${apiBase}/events/${eventId}/staff/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.ok ? r.json() : Promise.reject(r))
+        .then((data: { waitlist: Array<Record<string, unknown>>; tables: Array<Record<string, unknown>> }) => {
+          if (Array.isArray(data.waitlist)) {
+            const entries = data.waitlist.map(p => {
+              const parts = String(p.special_req || '').split(' | ');
+              return {
+                id: p.uuid as string,
+                remoteId: p.uuid as string,
+                name: parts[0] || 'Guest',
+                partySize: (p.party_size as number) || 1,
+                joinedAt: new Date((p.created_at as string) || Date.now()),
+                estimatedWait: 15,
+                specialRequests: parts[1] || undefined,
+                type: 'waitlist' as const,
+                eventId,
+              };
+            });
+            setWaitlist(prev => [
+              ...prev.filter(e => e.eventId !== eventId),
+              ...entries,
+            ]);
+          }
+          if (Array.isArray(data.tables) && data.tables.length > 0) {
+            const mappedTables = data.tables.map(t => ({
+              id: (t.table_number as number) ?? (t.uuid as string),
+              row: (t.row_index as number) ?? 0,
+              col: (t.col_index as number) ?? 0,
+              name: (t.name as string) || 'Table',
+              capacity: (t.table_capacity as number) || 4,
+              occupied: Boolean(t.occupied),
+              guestName: (t.guest_name as string) || undefined,
+              partySize: (t.party_size as number) || undefined,
+              seatedAt: t.seated_at ? new Date(t.seated_at as string) : undefined,
+            }));
+            setTables(mappedTables);
+            saveEventTables(eventId, mappedTables);
+          }
+        })
+        .catch(() => { /* silent — offline or server error */ });
+    };
+
+    fetchDashboard();
+    const interval = setInterval(fetchDashboard, 10_000);
+    return () => clearInterval(interval);
+  }, [selectedEvent?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset and re-initialise queue lines whenever the selected event changes
+  useEffect(() => {
+    // Always clear the previous event's attractions first
+    setAttractions([]);
+
+    if (!selectedEvent || selectedEvent.type !== 'capacity-based') return;
+
+    const capacityEvent = selectedEvent as CapacityBasedEvent;
+
+    if (capacityEvent.queueMode === 'single') {
+      setAttractions([{
+        id: 'default-single-queue',
+        name: selectedEvent.name,
+        waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+        queueSize: capacityEvent.currentCount || 0,
+        queueCapacity: capacityEvent.capacity || 100,
+        throughput: 240,
+        status: 'open',
+        autoCalculateWait: true,
+      }]);
+    } else if (capacityEvent.queueMode === 'multiple' && capacityEvent.queues && capacityEvent.queues.length > 0) {
+      setAttractions(capacityEvent.queues.map(queue => ({
+        id: queue.id,
+        name: queue.name,
+        waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+        queueSize: queue.currentCount || 0,
+        queueCapacity: queue.capacity,
+        throughput: 240,
+        status: 'open',
+        autoCalculateWait: true,
+      })));
     }
-  }, [selectedEvent]);
+    // multiple-queue with no queues defined yet → stays empty (setAttractions([]) already called above)
+  }, [selectedEvent?.id]); // key on ID only — property updates (e.g. currentFilledTables) must not reset queues
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -231,8 +287,13 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
     }
   };
 
+  // Only entries belonging to the currently selected event
+  const eventWaitlist = selectedEvent
+    ? waitlist.filter(e => e.eventId === selectedEvent.id)
+    : [];
+
   const handlePromote = (id: string) => {
-    const entry = waitlist.find((e) => e.id === id);
+    const entry = eventWaitlist.find((e) => e.id === id);
     if (!entry) return;
 
     const availableTable = tables.find(
@@ -251,10 +312,10 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
             }
           : t
       );
-      
+
       setTables(updatedTables);
-      setWaitlist(waitlist.filter((e) => e.id !== id));
-      
+      setWaitlist(prev => prev.filter((e) => e.id !== id));
+
       // Update event's currentFilledTables count
       if (selectedEvent && selectedEvent.type === 'table-based') {
         const filledCount = updatedTables.filter(t => t.occupied).length;
@@ -263,7 +324,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
         setEvents(getStoredEvents());
         saveEventTables(selectedEvent.id, updatedTables);
       }
-      
+
       toast.success(`${entry.name} seated at ${availableTable.name}`, {
         description: `Party of ${entry.partySize}`,
       });
@@ -276,12 +337,12 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
   };
 
   const handleSeatAll = () => {
-    const reservations = waitlist.filter((e) => e.type === 'reservation');
+    const reservations = eventWaitlist.filter((e) => e.type === 'reservation');
     if (reservations.length === 0) return;
 
     let seatedCount = 0;
     const newTables = [...tables];
-    const newWaitlist = [...waitlist];
+    const newWaitlist = [...waitlist]; // operate on full list so other events' entries are preserved
 
     reservations.forEach((entry) => {
       const availableTableIndex = newTables.findIndex(
@@ -325,10 +386,10 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
   };
 
   const handleNoShow = (id: string) => {
-    const entry = waitlist.find((e) => e.id === id);
+    const entry = eventWaitlist.find((e) => e.id === id);
     if (!entry) return;
 
-    setWaitlist(waitlist.filter((e) => e.id !== id));
+    setWaitlist(prev => prev.filter((e) => e.id !== id));
     toast.error(`${entry.name} marked as no-show`);
     simulateSync();
   };
@@ -888,6 +949,15 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                           onClick={() => {
                             restoreEvent(event.id);
                             toast.success(`Event "${event.name}" restored successfully`);
+                            // Sync restore to Supabase
+                            const token = localStorage.getItem('authToken');
+                            if (token) {
+                              fetch(`${API_BASE}/events/${event.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                                body: JSON.stringify({ archived: false }),
+                              }).catch(() => {/* silently ignore — localStorage already updated */});
+                            }
                             setEvents(getActiveEvents().filter(e => e.businessId === user.businessId));
                             setArchivedEvents(getArchivedEvents().filter(e => e.businessId === user.businessId));
                           }}
@@ -1494,7 +1564,7 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                     : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
               >
-                Reservation List ({waitlist.filter(e => e.type === 'reservation').length})
+                Reservation List ({eventWaitlist.filter(e => e.type === 'reservation').length})
               </button>
               <button
                 onClick={() => setListView('waitlist')}
@@ -1504,15 +1574,15 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                     : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
               >
-                Live Waitlist ({waitlist.filter(e => e.type === 'waitlist').length})
+                Live Waitlist ({eventWaitlist.filter(e => e.type === 'waitlist').length})
               </button>
             </div>
 
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">
-                {listView === 'reservation' ? 'Reservation List' : 'Live Waitlist'} ({waitlist.filter(e => e.type === listView).length})
+                {listView === 'reservation' ? 'Reservation List' : 'Live Waitlist'} ({eventWaitlist.filter(e => e.type === listView).length})
               </h2>
-              {listView === 'reservation' && waitlist.filter(e => e.type === 'reservation').length > 0 && (
+              {listView === 'reservation' && eventWaitlist.filter(e => e.type === 'reservation').length > 0 && (
                 <button
                   onClick={handleSeatAll}
                   className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 active:scale-95 transition-transform shadow"
@@ -1523,13 +1593,13 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
               )}
             </div>
             
-            {waitlist.filter(e => e.type === listView).length === 0 ? (
+            {eventWaitlist.filter(e => e.type === listView).length === 0 ? (
               <div className="text-center py-12 text-gray-500">
                 <p>{listView === 'reservation' ? 'No reservations' : 'No guests on the waitlist'}</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {waitlist.filter(e => e.type === listView).map((entry, index) => (
+                {eventWaitlist.filter(e => e.type === listView).map((entry, index) => (
                   <div
                     key={entry.id}
                     className="bg-white border-2 border-black p-4 rounded-lg shadow-sm"
@@ -1687,6 +1757,14 @@ export function StaffDashboard({ onLogout, waitlist, setWaitlist, tables, setTab
                   if (eventToDelete) {
                     archiveEvent(eventToDelete.id);
                     toast.success(`Event "${eventToDelete.name}" archived successfully`);
+                    // Sync archive to Supabase
+                    const token = localStorage.getItem('authToken');
+                    if (token) {
+                      fetch(`${API_BASE}/events/${eventToDelete.id}`, {
+                        method: 'DELETE',
+                        headers: { Authorization: `Bearer ${token}` },
+                      }).catch(() => {/* silently ignore — localStorage already updated */});
+                    }
                     // Refresh events
                     setEvents(getActiveEvents().filter(e => e.businessId === user.businessId));
                     setArchivedEvents(getArchivedEvents().filter(e => e.businessId === user.businessId));

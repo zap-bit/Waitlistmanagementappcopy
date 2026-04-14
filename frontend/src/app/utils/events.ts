@@ -152,16 +152,17 @@ export const getEventById = (eventId: string): Event | null => {
 };
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
 
-export const syncEventToSupabase = async (event: Event): Promise<void> => {
+/** Syncs a locally-created event to Supabase and replaces its local ID with the
+ *  returned Supabase UUID so future operations use the real ID.
+ *  Returns the remote UUID on success, null on failure. */
+export const syncEventToSupabase = async (event: Event): Promise<string | null> => {
   const token = localStorage.getItem('authToken');
-  if (!token) return;
-
-  const eventType = event.type === 'table-based' ? 'TABLE' : 'CAPACITY';
+  if (!token) return null;
 
   const isTable = event.type === 'table-based';
   const payload: Record<string, unknown> = {
     name: event.name,
-    event_type: eventType,
+    event_type: isTable ? 'TABLE' : 'CAPACITY',
     archived: event.archived ?? false,
     location: !isTable ? (event as CapacityBasedEvent).location : null,
     queue_capacity: !isTable ? (event as CapacityBasedEvent).capacity : null,
@@ -170,19 +171,33 @@ export const syncEventToSupabase = async (event: Event): Promise<void> => {
     num_tables: isTable ? (event as TableBasedEvent).numberOfTables : null,
     avg_size: isTable ? (event as TableBasedEvent).averageTableSize : null,
     reservation_duration: isTable ? (event as TableBasedEvent).reservationDuration : null,
-    no_show_policy: isTable ? 15 : null,
+    no_show_policy: isTable ? (event as TableBasedEvent).reservationDuration ? 15 : null : null,
     no_show_rate: null,
     avg_service_time: null,
   };
 
   try {
-    await fetch(`${API_BASE}/events`, {
+    const res = await fetch(`${API_BASE}/events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) return null;
+    const data = await res.json() as Record<string, unknown>;
+    const remoteUuid = data.uuid as string | undefined;
+    if (!remoteUuid) return null;
+
+    // Replace the temporary local ID with the real Supabase UUID
+    const events = getStoredEvents();
+    const idx = events.findIndex(e => e.id === event.id);
+    if (idx !== -1) {
+      events[idx] = { ...events[idx], id: remoteUuid };
+      saveEvents(events);
+    }
+    return remoteUuid;
   } catch (e) {
     console.error('Failed to sync event to Supabase:', e);
+    return null;
   }
 };
 
@@ -204,7 +219,7 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
         businessId: e.account_uuid as string,
         name: e.name as string,
         status: 'active' as EventStatus,
-        createdAt: new Date(e.created_at as string || Date.now()),
+        createdAt: new Date((e.created_at as string) || Date.now()),
         archived: e.archived as boolean,
         queues: e.event_queues || [],
       };
@@ -232,7 +247,10 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
       } as CapacityBasedEvent;
     });
 
-    saveEvents(mapped);
+    // Merge: keep any local-only events (offline-created, not yet in Supabase)
+    const remoteIds = new Set(mapped.map(e => e.id));
+    const localOnly = getStoredEvents().filter(e => !remoteIds.has(e.id));
+    saveEvents([...mapped, ...localOnly]);
   } catch (e) {
     console.error('Failed to load events from Supabase:', e);
   }

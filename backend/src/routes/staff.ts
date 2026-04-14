@@ -10,15 +10,20 @@ staffRouter.use(requireAuth, requireRole('staff'), requireStaffEventAccess);
 staffRouter.get('/dashboard', async (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
 
-  const [{ data: waitlist, error: waitlistError }, { data: tables, error: tablesError }] = await Promise.all([
+  const [
+    { data: waitlist, error: waitlistError },
+    { data: tables, error: tablesError },
+    { data: seated, error: seatedError },
+  ] = await Promise.all([
     supabase.from('party').select('*').eq('event_uuid', eventId),
     supabase.from('event_table').select('*').eq('event_uuid', eventId),
+    supabase.from('cap_waitlist').select('uuid').eq('event_uuid', eventId).eq('exit_reason', 'SERVED'),
   ]);
 
-  if (waitlistError || tablesError) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to load dashboard'));
+  if (waitlistError || tablesError || seatedError) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to load dashboard'));
 
-  const occupiedTables = 0;
-  const guestsSeated = 0;
+  const occupiedTables = (tables ?? []).filter((t: Record<string, unknown>) => t.occupied).length;
+  const guestsSeated = seated?.length ?? 0;
 
   return res.json({
     occupancy: {
@@ -49,7 +54,7 @@ staffRouter.post('/promote', async (req, res, next) => {
 
 staffRouter.post('/seat', async (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
-  const { entryId } = req.body ?? {};
+  const { entryId, tableId } = req.body ?? {};
 
   const { data: entry, error } = await supabase.from('party').select('*').eq('uuid', entryId).eq('event_uuid', eventId).maybeSingle();
   if (error || !entry) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
@@ -63,9 +68,29 @@ staffRouter.post('/seat', async (req, res, next) => {
     exit_reason: 'SERVED',
   });
 
-  return res.json({ entryId, status: 'SEATED' });
+  if (tableId !== undefined) {
+    await supabase
+      .from('event_table')
+      .update({ occupied: true })
+      .eq('event_uuid', eventId)
+      .eq('table_number', tableId);
+  }
+
+  return res.json({ entryId, tableId, status: 'SEATED' });
 });
 
-staffRouter.post('/clear-table', async (_req, res) => {
-  return res.json({ ok: true });
+staffRouter.post('/clear-table', async (req, res, next) => {
+  const { eventId } = req.params as { eventId: string };
+  const { tableId } = req.body ?? {};
+
+  if (tableId === undefined) return next(new ApiError(400, 'INVALID_INPUT', 'tableId is required'));
+
+  const { error } = await supabase
+    .from('event_table')
+    .update({ occupied: false })
+    .eq('event_uuid', eventId)
+    .eq('table_number', tableId);
+
+  if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to clear table'));
+  return res.json({ ok: true, tableId });
 });

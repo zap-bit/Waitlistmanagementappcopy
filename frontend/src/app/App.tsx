@@ -1,27 +1,28 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { StaffDashboard } from './components/StaffDashboard';
 import { AttendeeView } from './components/AttendeeView';
 import { Welcome } from './components/Welcome';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
-import { Users, ClipboardList } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { Table } from './components/TableGrid';
-import { 
-  getStoredUser, 
-  login as authLogin, 
-  signupUser as authSignupUser, 
+import {
+  getStoredUser,
+  login as authLogin,
+  signupUser as authSignupUser,
   signupBusiness as authSignupBusiness,
   logout as authLogout,
-  User 
+  User
 } from './utils/auth';
-import { getStoredEvents, CapacityBasedEvent, TableBasedEvent, loadEventsFromSupabase, syncEventToSupabase } from './utils/events';
+import { getStoredEvents, CapacityBasedEvent, TableBasedEvent, loadEventsFromSupabase } from './utils/events';
+import { queueOp, cancelQueuedAdd, flushPendingOps, getPendingOps } from './utils/offlineQueue';
 
 type Role = 'staff' | 'attendee' | null;
 type AuthScreen = 'welcome' | 'login' | 'signup' | null;
 
 export interface WaitlistEntry {
   id: string;
+  remoteId?: string; // Supabase UUID — set after successful POST or sync
   name: string;
   partySize: number;
   joinedAt: Date;
@@ -31,6 +32,7 @@ export interface WaitlistEntry {
   eventId?: string;
   queueId?: string; // For multiple-queue capacity events
   reservationTime?: Date; // Optional time for reservation
+  position?: number; // 1-based queue position from Supabase
 }
 
 const getInitialWaitlist = (): WaitlistEntry[] => {
@@ -42,7 +44,7 @@ const getInitialWaitlist = (): WaitlistEntry[] => {
         return parsed.map((entry: any) => ({
           ...entry,
           joinedAt: new Date(entry.joinedAt),
-          type: entry.type || 'waitlist', // Default to 'waitlist' if type is missing
+          type: entry.type || 'waitlist',
           reservationTime: entry.reservationTime ? new Date(entry.reservationTime) : undefined,
         }));
       } catch (e) {
@@ -50,49 +52,7 @@ const getInitialWaitlist = (): WaitlistEntry[] => {
       }
     }
   }
-  // Default demo data
-  return [
-    {
-      id: '1',
-      name: 'Sarah Johnson',
-      partySize: 4,
-      joinedAt: new Date(Date.now() - 15 * 60000),
-      estimatedWait: 25,
-      type: 'waitlist' as const,
-    },
-    {
-      id: '2',
-      name: 'Michael Chen',
-      partySize: 2,
-      joinedAt: new Date(Date.now() - 10 * 60000),
-      estimatedWait: 20,
-      type: 'reservation' as const,
-    },
-    {
-      id: '3',
-      name: 'Emily Rodriguez',
-      partySize: 6,
-      joinedAt: new Date(Date.now() - 8 * 60000),
-      estimatedWait: 30,
-      type: 'waitlist' as const,
-    },
-    {
-      id: '4',
-      name: 'David Thompson',
-      partySize: 3,
-      joinedAt: new Date(Date.now() - 5 * 60000),
-      estimatedWait: 15,
-      type: 'reservation' as const,
-    },
-    {
-      id: '5',
-      name: 'Jessica Lee',
-      partySize: 2,
-      joinedAt: new Date(Date.now() - 3 * 60000),
-      estimatedWait: 12,
-      type: 'waitlist' as const,
-    },
-  ];
+  return [];
 };
 
 const getInitialTables = (): Table[] => {
@@ -131,23 +91,72 @@ const getInitialTables = (): Table[] => {
   return initialTables;
 };
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
+
 export default function App() {
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>(getInitialWaitlist);
   const [tables, setTables] = useState<Table[]>(getInitialTables);
   const [authScreen, setAuthScreen] = useState<AuthScreen>(null);
   const [user, setUser] = useState<User | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role>(null);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
+  // Stable ref so the online handler can call setWaitlist without being in its dep array
+  const setWaitlistRef = useRef(setWaitlist);
 
   // Check for logged in user on mount
   useEffect(() => {
     const storedUser = getStoredUser();
     if (storedUser) {
       setUser(storedUser);
-      // Auto-select role based on user type
       setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
     } else {
       setAuthScreen('welcome');
     }
+  }, []);
+
+  // Online/offline detection + sync flush
+  useEffect(() => {
+    const handleOnline = async () => {
+      toast.dismiss('offline-toast');
+      const token = localStorage.getItem('authToken');
+      if (!token) return;
+
+      const ops = getPendingOps();
+      if (ops.length === 0) {
+        toast.success('Back online');
+        return;
+      }
+
+      toast.loading(`Syncing ${ops.length} offline change${ops.length !== 1 ? 's' : ''}…`, { id: 'sync-toast' });
+      const result = await flushPendingOps(token, API_BASE, (localId, remoteId, type) => {
+        if (type === 'ADD_WAITLIST') {
+          setWaitlistRef.current(prev =>
+            prev.map(e => e.id === localId ? { ...e, remoteId } : e)
+          );
+        }
+      });
+      toast.dismiss('sync-toast');
+      if (result.synced > 0) toast.success(`Synced ${result.synced} offline change${result.synced !== 1 ? 's' : ''}`);
+      if (result.errors > 0) toast.error(`${result.errors} change${result.errors !== 1 ? 's' : ''} failed to sync`);
+
+      // Reload events in case any ADD_EVENT ops resolved new UUIDs
+      await loadEventsFromSupabase();
+    };
+
+    const handleOffline = () => {
+      toast.warning('You are offline. Changes will sync when reconnected.', {
+        id: 'offline-toast',
+        duration: Infinity,
+      });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   // Persist waitlist to localStorage whenever it changes
@@ -168,11 +177,55 @@ export default function App() {
     setSelectedRole(null);
     authLogout();
     setUser(null);
+    setWaitlist([]);
     setAuthScreen('welcome');
   };
 
+  /** Loads the current user's waitlist entries from Supabase and replaces local state.
+   *  Maps the `party` table rows (where name is encoded as the first segment of special_req). */
+  const loadWaitlistFromSupabase = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/auth/me/waitlist`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const { data } = await res.json() as { data: Array<Record<string, unknown>> };
+      if (!Array.isArray(data)) return;
+
+      const entries: WaitlistEntry[] = data.map(p => {
+        const parts = String(p.special_req || '').split(' | ');
+        return {
+          id: p.uuid as string,
+          remoteId: p.uuid as string,
+          name: parts[0] || 'Guest',
+          partySize: (p.party_size as number) || 1,
+          joinedAt: new Date((p.created_at as string) || Date.now()),
+          estimatedWait: 15,
+          specialRequests: parts[1] || undefined,
+          type: 'waitlist' as const,
+          eventId: p.event_uuid as string,
+          position: p.position as number | undefined,
+        };
+      });
+      setWaitlist(entries);
+    } catch (e) {
+      console.error('Failed to load waitlist from Supabase:', e);
+    }
+  };
+
+  // Attendees: keep waitlist position live by polling every 15 s.
+  // Staff dashboard has its own polling interval in StaffDashboard.tsx.
+  useEffect(() => {
+    if (!user || user.role === 'staff') return;
+    const interval = setInterval(loadWaitlistFromSupabase, 15_000);
+    return () => clearInterval(interval);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleLogin = async (email: string, password: string) => {
     localStorage.removeItem("events");
+    localStorage.removeItem("waitlist");
     localStorage.removeItem("myWaitlistIds");
     localStorage.removeItem("currentUser");
     localStorage.removeItem("usersDb");
@@ -181,10 +234,15 @@ export default function App() {
     const loggedInUser = await authLogin(email, password);
     if (loggedInUser) {
       setUser(loggedInUser);
-      loadEventsFromSupabase();
       setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
       setAuthScreen(null);
       toast.success(`Welcome back, ${loggedInUser.name}!`);
+      setEventsLoading(true);
+      await Promise.all([
+        loadEventsFromSupabase(),
+        loadWaitlistFromSupabase(),
+      ]);
+      setEventsLoading(false);
     } else {
       toast.error('Invalid email or password');
     }
@@ -194,10 +252,15 @@ export default function App() {
     const newUser = await authSignupUser(email, password, name);
     if (newUser) {
       setUser(newUser);
-      loadEventsFromSupabase();
       setSelectedRole('attendee');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}!`);
+      setEventsLoading(true);
+      await Promise.all([
+        loadEventsFromSupabase(),
+        loadWaitlistFromSupabase(),
+      ]);
+      setEventsLoading(false);
     } else {
       toast.error('Email already exists');
     }
@@ -207,16 +270,18 @@ export default function App() {
     const newUser = await authSignupBusiness(email, password, ownerName, businessName);
     if (newUser) {
       setUser(newUser);
-      loadEventsFromSupabase();
       setSelectedRole('staff');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}! Your business "${businessName}" has been created.`);
+      setEventsLoading(true);
+      await loadEventsFromSupabase();
+      setEventsLoading(false);
     } else {
       toast.error('Email already exists');
     }
   };
 
-  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => {
+  const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date, onIdResolved?: (localId: string, remoteId: string) => void) => {
     // Calculate estimated wait based on event settings
     let estimatedWait = 15; // Default fallback
     
@@ -248,8 +313,9 @@ export default function App() {
       estimatedWait = 15 + waitlist.length * 5;
     }
     
+    const localId = Date.now().toString();
     const newEntry: WaitlistEntry = {
-      id: Date.now().toString(),
+      id: localId,
       name,
       partySize,
       joinedAt: new Date(),
@@ -262,27 +328,64 @@ export default function App() {
     };
     setWaitlist((prev) => [...prev, newEntry]);
 
-    // Sync to Supabase
     if (eventId) {
       const token = localStorage.getItem('authToken');
-      if (token) {
-        fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1'}/events/${eventId}/waitlist`, {
+      if (token && navigator.onLine) {
+        // Online: POST immediately and reconcile local ID → Supabase UUID
+        fetch(`${API_BASE}/events/${eventId}/waitlist`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ name, partySize, specialRequests, type }),
-        }).catch(e => console.error('Failed to sync waitlist entry:', e));
+        })
+          .then(r => r.ok ? r.json() : Promise.reject(r))
+          .then((data: Record<string, unknown>) => {
+            const remoteId = data.uuid as string | undefined;
+            if (remoteId) {
+              setWaitlist(prev => prev.map(e => e.id === localId ? { ...e, id: remoteId, remoteId } : e));
+              onIdResolved?.(localId, remoteId);
+            }
+          })
+          .catch(() => {
+            // Request failed despite being online (server error) — queue for retry
+            queueOp({ type: 'ADD_WAITLIST', localId, eventId, payload: { name, partySize, specialRequests, type } });
+          });
+      } else if (token) {
+        // Offline — queue immediately
+        queueOp({ type: 'ADD_WAITLIST', localId, eventId, payload: { name, partySize, specialRequests, type } });
       }
     }
 
-    return newEntry.id;
+    return localId;
   };
 
   const removeFromWaitlist = (id: string) => {
+    const entry = waitlist.find(e => e.id === id);
     setWaitlist((prev) => prev.filter((e) => e.id !== id));
+
+    if (entry?.eventId) {
+      const token = localStorage.getItem('authToken');
+      if (!token) return;
+
+      if (!entry.remoteId) {
+        // Entry was never synced — cancel the queued ADD_WAITLIST instead of issuing a DELETE
+        cancelQueuedAdd(id);
+        return;
+      }
+
+      const deleteUrl = `${API_BASE}/events/${entry.eventId}/waitlist/${entry.remoteId}`;
+      if (navigator.onLine) {
+        fetch(deleteUrl, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+          .catch(() => {
+            queueOp({ type: 'REMOVE_WAITLIST', localId: id, eventId: entry.eventId, payload: { remoteId: entry.remoteId! } });
+          });
+      } else {
+        queueOp({ type: 'REMOVE_WAITLIST', localId: id, eventId: entry.eventId, payload: { remoteId: entry.remoteId } });
+      }
+    }
   };
 
   const updateWaitlistEntry = (id: string, updates: Partial<Omit<WaitlistEntry, 'id' | 'joinedAt'>>) => {
-    setWaitlist((prev) => prev.map((entry) => 
+    setWaitlist((prev) => prev.map((entry) =>
       entry.id === id ? { ...entry, ...updates } : entry
     ));
   };

@@ -172,5 +172,19 @@ authRouter.get('/me', requireAuth, (req, res) => res.json({ user: sanitizeUser(r
 authRouter.get('/me/waitlist', requireAuth, async (req, res, next) => {
   const { data, error } = await supabase.from('party').select('*').eq('account_uuid', req.authUser!.id);
   if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to load waitlist entries'));
-  return res.json({ data });
+  if (!data || data.length === 0) return res.json({ data: [] });
+
+  // For each entry, count how many rows in the same event were created before it (gives 1-based position)
+  const withPositions = await Promise.all(
+    data.map(async (entry) => {
+      const { count } = await supabase
+        .from('party')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_uuid', entry.event_uuid)
+        .lt('created_at', entry.created_at);
+      return { ...entry, position: (count ?? 0) + 1 };
+    })
+  );
+
+  return res.json({ data: withPositions });
 });

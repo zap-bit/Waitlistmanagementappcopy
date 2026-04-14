@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { StatusBar } from './StatusBar';
 import { QRScanner } from './QRScanner';
 import { QrCode, Clock, Users, LogOut, X, Calendar, ListOrdered, Search, Ticket, User as UserIcon, Menu } from 'lucide-react';
@@ -13,7 +13,7 @@ import { calculateDynamicWaitTime, fetchPredictedWait } from '../utils/waitTime'
 interface AttendeeViewProps {
   onLogout: () => void;
   waitlist: WaitlistEntry[];
-  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date) => string;
+  addToWaitlist: (name: string, partySize: number, specialRequests?: string, type?: 'reservation' | 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date, onIdResolved?: (localId: string, remoteId: string) => void) => string;
   removeFromWaitlist: (id: string) => void;
   updateWaitlistEntry: (id: string, updates: Partial<Omit<WaitlistEntry, 'id' | 'joinedAt'>>) => void;
   allWaitlistEntries: WaitlistEntry[];
@@ -39,6 +39,9 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
   
   // Currently selected waitlist entry to view
   const [selectedWaitlistId, setSelectedWaitlistId] = useState<string | null>(null);
+
+  // Tracks whether we've already done the first Supabase sync (avoid re-auto-selecting on every poll)
+  const hasSyncedFromSupabase = useRef(false);
   
   const [partySize, setPartySize] = useState(2);
   const [guestName, setGuestName] = useState('');
@@ -143,21 +146,46 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     }
   }, [isOnline]);
 
+  // When Supabase entries arrive (after login load or poll), sync them into myWaitlistIds
+  // and auto-select on the very first load so the user sees their status immediately.
+  useEffect(() => {
+    if (allWaitlistEntries.length === 0) return;
+    const supabaseIds = allWaitlistEntries.map(e => e.id);
+    // Merge: keep any locally-added IDs that haven't synced yet
+    setMyWaitlistIds(prev => Array.from(new Set([...prev, ...supabaseIds])));
+
+    if (!hasSyncedFromSupabase.current) {
+      hasSyncedFromSupabase.current = true;
+      // Auto-select the first (or already-selected) entry and show status
+      setSelectedWaitlistId(prev => {
+        if (prev && allWaitlistEntries.find(e => e.id === prev)) return prev;
+        return supabaseIds[0];
+      });
+      setViewingStatus(true);
+    }
+  }, [allWaitlistEntries]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Find my entry in the waitlist or full list
   const myEntry = allWaitlistEntries.find((e) => e.id === selectedWaitlistId);
   const isOnWaitlist = !!myEntry;
-  
-  // Calculate position only for entries of the same type and event
-  const sameTypeAndEventEntries = myEntry 
-    ? allWaitlistEntries.filter(e => e.type === myEntry.type && e.eventId === myEntry.eventId) 
-    : [];
-  const position = myEntry ? sameTypeAndEventEntries.findIndex((e) => e.id === selectedWaitlistId) + 1 : 0;
-  
-  // Calculate dynamic wait time based on current position
+
+  // Position comes from Supabase via the position field set by polling;
+  // fall back to 1 while the first poll hasn't returned yet
+  const position = myEntry?.position ?? 1;
+
+  // Calculate dynamic wait time based on position from Supabase
   const [estimatedWaitMinutes, setEstimatedWaitMinutes] = useState(myEntry ? calculateDynamicWaitTime(myEntry, allWaitlistEntries) : 0);
 
+  // Update wait time whenever position changes (driven by 15s polling in App)
   useEffect(() => {
-    console.log("myEntry check", myEntry?.eventId);
+    if (!myEntry) return;
+    const event = availableEvents.find(e => e.id === myEntry.eventId);
+    if (event && event.type === 'capacity-based') {
+      setEstimatedWaitMinutes(Math.max(0, (position - 1)) * (event as CapacityBasedEvent).estimatedWaitPerPerson);
+    }
+  }, [position]);
+
+  useEffect(() => {
     if (!myEntry?.eventId) return;
     fetchPredictedWait(myEntry.eventId).then(mins => {
       if (mins !== null) setEstimatedWaitMinutes(mins);
@@ -335,15 +363,19 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     }
 
     const newId = addToWaitlist(
-      guestName.trim(), 
-      partySize, 
+      guestName.trim(),
+      partySize,
       specialRequests.trim() || undefined,
       joinType as 'reservation' | 'waitlist',
       selectedEvent.id,
       selectedQueue?.id,
-      reservationDateTime
+      reservationDateTime,
+      (localId, remoteId) => {
+        setMyWaitlistIds(prev => prev.map(id => id === localId ? remoteId : id));
+        setSelectedWaitlistId(prev => prev === localId ? remoteId : prev);
+      }
     );
-    
+
     setMyWaitlistIds([...myWaitlistIds, newId]);
     setSelectedWaitlistId(newId);
     setViewingStatus(true);
@@ -400,14 +432,18 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
     } else {
       // Add new guest to waitlist
       const newId = addToWaitlist(
-        guestName.trim(), 
-        partySize, 
+        guestName.trim(),
+        partySize,
         specialRequests.trim() || undefined,
         myEntry.type,
         myEntry.eventId,
-        myEntry.queueId
+        myEntry.queueId,
+        undefined,
+        (localId, remoteId) => {
+          setMyWaitlistIds(prev => prev.map(id => id === localId ? remoteId : id));
+        }
       );
-      
+
       setMyWaitlistIds([...myWaitlistIds, newId]);
       toast.success(`Added ${guestName} to the waitlist!`);
       
@@ -943,12 +979,8 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                       
                       const fullDisplayName = queueName ? `${queueName} - ${eventName}` : eventName;
                       
-                      // Calculate position
-                      const sameTypeEntries = allWaitlistEntries.filter(e => 
-                        e.type === entry.type && e.eventId === entry.eventId
-                      );
-                      const pos = sameTypeEntries.findIndex(e => e.id === id) + 1;
-                      
+                      const pos = entry.position ?? 1;
+
                       return (
                         <option key={id} value={id}>
                           {fullDisplayName} - {entry.name} {entry.type === 'waitlist' ? `(#${pos})` : entry.reservationTime ? `(${entry.reservationTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : '(Reservation)'}
@@ -1169,14 +1201,13 @@ export function AttendeeView({ onLogout, waitlist, addToWaitlist, removeFromWait
                     
                     const fullDisplayName = queueName ? `${queueName} - ${eventName}` : eventName;
                     
-                    // Calculate position for this entry
-                    const sameTypeEntries = allWaitlistEntries.filter(e => 
-                      e.type === entry.type && e.eventId === entry.eventId
-                    );
-                    const pos = sameTypeEntries.findIndex(e => e.id === id) + 1;
-                    
-                    // Calculate dynamic wait time
-                    const dynamicWaitTime = calculateDynamicWaitTime(entry, allWaitlistEntries);
+                    const pos = entry.position ?? 1;
+
+                    // Calculate dynamic wait time from position
+                    const dynamicWaitTime = (() => {
+                      if (!event || event.type !== 'capacity-based') return 0;
+                      return Math.max(0, (pos - 1)) * (event as CapacityBasedEvent).estimatedWaitPerPerson;
+                    })();
                     
                     return (
                       <button
