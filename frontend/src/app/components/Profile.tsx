@@ -1,7 +1,16 @@
-import { useState, useEffect } from 'react';
-import { User as UserIcon, Mail, Phone, Users, Save, X, LogOut, ChevronLeft } from 'lucide-react';
-import { toast } from 'sonner';
-import { User } from '../utils/auth';
+import { useState, useEffect } from "react";
+import {
+  User as UserIcon,
+  Mail,
+  Phone,
+  Users,
+  Save,
+  X,
+  LogOut,
+  ChevronLeft,
+} from "lucide-react";
+import { toast } from "sonner";
+import { User } from "../utils/auth";
 
 interface ProfileProps {
   user: User;
@@ -16,38 +25,77 @@ interface ProfileData {
   preferences: string;
 }
 
-export function Profile({ user, onClose, onLogout }: ProfileProps) {
-  const [profileData, setProfileData] = useState<ProfileData>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(`profile_${user.id}`);
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error('Error loading profile:', e);
+export function Profile({
+  user,
+  onClose,
+  onLogout,
+}: ProfileProps) {
+  const [profileData, setProfileData] = useState<ProfileData>(
+    () => {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem(
+          `profile_${user.id}`,
+        );
+        if (saved) {
+          try {
+            return JSON.parse(saved);
+          } catch (e) {
+            console.error("Error loading profile:", e);
+          }
         }
       }
-    }
-    return {
-      displayName: user.email.split('@')[0],
-      phone: '',
-      defaultPartySize: 2,
-      preferences: '',
-    };
-  });
+      return {
+        displayName: user.email.split("@")[0],
+        phone: "",
+        defaultPartySize: 2,
+        preferences: "",
+      };
+    },
+  );
 
   const [isEditing, setIsEditing] = useState(false);
 
+  // Format phone number to +x (xxx) xxx-xxxx
+  const formatPhoneNumber = (value: string) => {
+    // Remove all non-numeric characters
+    const numbers = value.replace(/\D/g, "");
+
+    // Don't format if empty
+    if (!numbers) return "";
+
+    // Format based on length
+    if (numbers.length <= 1) {
+      return `+${numbers}`;
+    } else if (numbers.length <= 4) {
+      return `+${numbers[0]} (${numbers.slice(1)}`;
+    } else if (numbers.length <= 7) {
+      return `+${numbers[0]} (${numbers.slice(1, 4)}) ${numbers.slice(4)}`;
+    } else {
+      return `+${numbers[0]} (${numbers.slice(1, 4)}) ${numbers.slice(4, 7)}-${numbers.slice(7, 11)}`;
+    }
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatPhoneNumber(e.target.value);
+    setProfileData({
+      ...profileData,
+      phone: formatted,
+    });
+  };
+
   const handleSave = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(`profile_${user.id}`, JSON.stringify(profileData));
-      toast.success('Profile saved successfully!');
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        `profile_${user.id}`,
+        JSON.stringify(profileData),
+      );
+      toast.success("Profile saved successfully!");
       setIsEditing(false);
     }
   };
 
   const handleLogout = () => {
-    if (confirm('Are you sure you want to logout?')) {
+    if (confirm("Are you sure you want to logout?")) {
       onLogout();
     }
   };
@@ -72,16 +120,22 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
               Logout
             </button>
           </div>
-          
+
           <div className="flex items-center gap-4">
             <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center">
               <UserIcon className="w-10 h-10" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold">{profileData.displayName}</h2>
-              <p className="text-blue-100 text-sm">{user.email}</p>
+              <h2 className="text-2xl font-bold">
+                {profileData.displayName}
+              </h2>
+              <p className="text-blue-100 text-sm">
+                {user.email}
+              </p>
               <div className="mt-1 inline-block px-2 py-1 bg-white/20 rounded text-xs font-medium">
-                {user.role === 'staff' ? '👔 Staff Account' : '👤 Guest Account'}
+                {user.role === "staff"
+                  ? "👔 Staff Account"
+                  : "👤 Guest Account"}
               </div>
             </div>
           </div>
@@ -92,7 +146,9 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
           {/* Account Information */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-800">Account Information</h3>
+              <h3 className="text-lg font-semibold text-gray-800">
+                Account Information
+              </h3>
               {!isEditing && (
                 <button
                   onClick={() => setIsEditing(true)}
@@ -114,7 +170,12 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
                   <input
                     type="text"
                     value={profileData.displayName}
-                    onChange={(e) => setProfileData({ ...profileData, displayName: e.target.value })}
+                    onChange={(e) =>
+                      setProfileData({
+                        ...profileData,
+                        displayName: e.target.value,
+                      })
+                    }
                     disabled={!isEditing}
                     placeholder="Your name"
                     className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-600"
@@ -136,34 +197,44 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
                     className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
                   />
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Email cannot be changed</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Email cannot be changed
+                </p>
               </div>
 
               {/* Phone */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone Number <span className="text-gray-400 font-normal">(Optional)</span>
+                  Phone Number{" "}
+                  <span className="text-gray-400 font-normal">
+                    (Optional)
+                  </span>
                 </label>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <input
                     type="tel"
                     value={profileData.phone}
-                    onChange={(e) => setProfileData({ ...profileData, phone: e.target.value })}
+                    onChange={handlePhoneChange}
                     disabled={!isEditing}
-                    placeholder="(555) 123-4567"
+                    placeholder="+1 (555) 123-4567"
                     className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-600"
                   />
                 </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Format: +x (xxx) xxx-xxxx
+                </p>
               </div>
             </div>
           </div>
 
           {/* Guest Preferences (Attendee only) */}
-          {user.role === 'attendee' && (
+          {user.role === "attendee" && (
             <div className="border-t border-gray-200 pt-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Guest Preferences</h3>
-              
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                Guest Preferences
+              </h3>
+
               <div className="space-y-4">
                 {/* Default Party Size */}
                 <div>
@@ -174,28 +245,46 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
                     <Users className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <select
                       value={profileData.defaultPartySize}
-                      onChange={(e) => setProfileData({ ...profileData, defaultPartySize: Number(e.target.value) })}
+                      onChange={(e) =>
+                        setProfileData({
+                          ...profileData,
+                          defaultPartySize: Number(
+                            e.target.value,
+                          ),
+                        })
+                      }
                       disabled={!isEditing}
                       className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-600"
                     >
                       {[1, 2, 3, 4, 5, 6, 7, 8].map((size) => (
                         <option key={size} value={size}>
-                          {size} {size === 1 ? 'person' : 'people'}
+                          {size}{" "}
+                          {size === 1 ? "person" : "people"}
                         </option>
                       ))}
                     </select>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">This will be pre-filled when joining events</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    This will be pre-filled when joining events
+                  </p>
                 </div>
 
                 {/* Preferences */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Dining Preferences <span className="text-gray-400 font-normal">(Optional)</span>
+                    Dining Preferences{" "}
+                    <span className="text-gray-400 font-normal">
+                      (Optional)
+                    </span>
                   </label>
                   <textarea
                     value={profileData.preferences}
-                    onChange={(e) => setProfileData({ ...profileData, preferences: e.target.value })}
+                    onChange={(e) =>
+                      setProfileData({
+                        ...profileData,
+                        preferences: e.target.value,
+                      })
+                    }
                     disabled={!isEditing}
                     placeholder="e.g., Vegetarian, wheelchair accessible, allergies, etc."
                     rows={3}
@@ -207,20 +296,26 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
           )}
 
           {/* Staff Information (Staff only) */}
-          {user.role === 'staff' && (
+          {user.role === "staff" && (
             <div className="border-t border-gray-200 pt-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Staff Information</h3>
-              
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                Staff Information
+              </h3>
+
               <div className="bg-gray-50 rounded-lg p-4 space-y-2">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-600">Role</span>
                   <span className="font-semibold text-gray-800">
-                    {user.businessId ? 'Business Owner' : 'Staff Member'}
+                    {user.businessId
+                      ? "Business Owner"
+                      : "Staff Member"}
                   </span>
                 </div>
                 {user.businessId && (
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600">Business ID</span>
+                    <span className="text-gray-600">
+                      Business ID
+                    </span>
                     <span className="font-mono text-xs bg-white px-2 py-1 rounded">
                       {user.businessId.substring(0, 8)}...
                     </span>
@@ -236,7 +331,9 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
               <button
                 onClick={() => {
                   // Reset to saved data
-                  const saved = localStorage.getItem(`profile_${user.id}`);
+                  const saved = localStorage.getItem(
+                    `profile_${user.id}`,
+                  );
                   if (saved) {
                     setProfileData(JSON.parse(saved));
                   }
@@ -272,8 +369,10 @@ export function Profile({ user, onClose, onLogout }: ProfileProps) {
 }
 
 // Export function to get saved profile data
-export function getSavedProfile(userId: string): ProfileData | null {
-  if (typeof window !== 'undefined') {
+export function getSavedProfile(
+  userId: string,
+): ProfileData | null {
+  if (typeof window !== "undefined") {
     const saved = localStorage.getItem(`profile_${userId}`);
     if (saved) {
       try {

@@ -30,24 +30,38 @@ waitlistRouter.get('/', async (req, res, next) => {
 
 waitlistRouter.post('/', async (req, res, next) => {
   const { eventId } = req.params as { eventId: string };
-  const { name, partySize, specialRequests } = req.body ?? {};
+  const { name, partySize, specialRequests, type, reservationTime } = req.body ?? {}; // <-- ADD reservationTime here
 
   const trimmedName = String(name || '').trim();
-  const normalizedPartySize = Number(partySize);
-  if (!trimmedName || !Number.isInteger(normalizedPartySize) || normalizedPartySize < 1 || normalizedPartySize > 20) {
-    return next(new ApiError(400, 'INVALID_INPUT', 'Valid name and partySize (1-20) are required'));
+  const size = Number(partySize);
+
+  if (!trimmedName || !Number.isInteger(size) || size < 1) {
+    return next(new ApiError(400, 'INVALID_INPUT', 'A valid name and party size are required'));
   }
 
-  const { data: event } = await supabase.from('events').select('uuid').eq('uuid', eventId).maybeSingle();
-  if (!event) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId }));
+  const specialReq = specialRequests ? `${trimmedName} | ${String(specialRequests).trim()}` : trimmedName;
+
+  // Get current max position for the event
+  const { count } = await supabase
+    .from('party')
+    .select('*', { count: 'exact', head: true })
+    .eq('event_uuid', eventId);
+
+  const position = (count ?? 0) + 1;
 
   const { data, error } = await supabase
     .from('party')
     .insert({
       account_uuid: req.authUser!.id,
       event_uuid: eventId,
-      party_size: normalizedPartySize,
-      special_req: [trimmedName, typeof specialRequests === 'string' ? specialRequests.trim().slice(0, 500) : ''].filter(Boolean).join(' | '),
+      name: trimmedName,
+      party_size: size,
+      special_req: specialReq,
+      type: type === 'reservation' ? 'reservation' : 'waitlist',
+      reservation_time: reservationTime ? new Date(reservationTime).toISOString() : null, // <-- ADD THIS LINE
+      status: 'QUEUED',
+      position,
+      estimated_wait: 15,
     })
     .select('*')
     .single();
