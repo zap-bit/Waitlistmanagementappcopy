@@ -4,6 +4,7 @@ import { AttendeeView } from './components/AttendeeView';
 import { Welcome } from './components/Welcome';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
+import { Users, ClipboardList } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { Table } from './components/TableGrid';
 import {
@@ -75,7 +76,7 @@ const getInitialTables = (): Table[] => {
   const initialTables: Table[] = [];
   const defaultCapacities = [2, 2, 4, 4, 2, 4, 6, 6, 4, 4, 6, 8];
   const cols = 4;
-  
+
   for (let i = 0; i < 12; i++) {
     const row = Math.floor(i / cols);
     const col = i % cols;
@@ -284,12 +285,12 @@ export default function App() {
   const addToWaitlist = (name: string, partySize: number, specialRequests?: string, type: 'reservation' | 'waitlist' = 'waitlist', eventId?: string, queueId?: string, reservationTime?: Date, onIdResolved?: (localId: string, remoteId: string) => void) => {
     // Calculate estimated wait based on event settings
     let estimatedWait = 15; // Default fallback
-    
+
     if (eventId) {
       const event = getStoredEvents().find(e => e.id === eventId);
       if (event && event.type === 'capacity-based') {
         const capacityEvent = event as CapacityBasedEvent;
-        
+
         // Count people ahead in the same queue/event
         let peopleAhead = 0;
         if (capacityEvent.queueMode === 'multiple' && queueId) {
@@ -299,7 +300,7 @@ export default function App() {
           // For single queue, count all people in the event
           peopleAhead = waitlist.filter(e => e.eventId === eventId).length;
         }
-        
+
         // Calculate wait time: people ahead × wait time per person
         estimatedWait = peopleAhead * capacityEvent.estimatedWaitPerPerson;
       } else if (event && event.type === 'table-based') {
@@ -312,7 +313,7 @@ export default function App() {
       // Legacy fallback for entries without eventId
       estimatedWait = 15 + waitlist.length * 5;
     }
-    
+
     const localId = Date.now().toString();
     const newEntry: WaitlistEntry = {
       id: localId,
@@ -436,8 +437,8 @@ export default function App() {
   if (selectedRole === 'staff') {
     return (
       <>
-        <StaffDashboard 
-          onLogout={handleLogout} 
+        <StaffDashboard
+          onLogout={handleLogout}
           waitlist={waitlist}
           setWaitlist={setWaitlist}
           tables={tables}
@@ -452,7 +453,7 @@ export default function App() {
   if (selectedRole === 'attendee') {
     return (
       <>
-        <AttendeeView 
+        <AttendeeView
           onLogout={handleLogout}
           waitlist={waitlist}
           addToWaitlist={addToWaitlist}
