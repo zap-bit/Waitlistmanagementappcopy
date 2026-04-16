@@ -489,9 +489,9 @@ export function AttendeeView({
     if (!myEntry) return;
     const event = availableEvents.find(e => e.id === myEntry.eventId);
     if (event && event.type === 'capacity-based') {
-      setEstimatedWaitMinutes(Math.max(0, (position - 1)) * (event as CapacityBasedEvent).estimatedWaitPerPerson);
+      setEstimatedWaitMinutes(calculateDynamicWaitTime(myEntry, allWaitlistEntries));
     }
-  }, [position, myEntry, availableEvents]);
+  }, [myEntry, allWaitlistEntries]);
 
   useEffect(() => {
     if (!myEntry?.eventId) return;
