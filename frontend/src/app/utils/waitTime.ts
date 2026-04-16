@@ -1,14 +1,27 @@
 import { WaitlistEntry } from '../App';
 import { getStoredEvents, CapacityBasedEvent, TableBasedEvent } from './events';
 
-const AI_BASE_URL = import.meta.env.VITE_AI_API_BASE_URL || 'http://localhost:8001/v1';
+const AI_BASE_URL =
+  import.meta.env.VITE_AI_API_BASE_URL || 'http://localhost:8001/v1';
 
-export const fetchPredictedWait = async (eventId: string): Promise<number | null> => {
+const backendWaitCache: Record<string, number> = {};
+
+export const fetchPredictedWait = async (
+  eventId: string
+): Promise<number | null> => {
   try {
-    const res = await fetch(`${AI_BASE_URL}/events/${eventId}/predicted-wait`, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}` },
-    });
+    const res = await fetch(
+      `${AI_BASE_URL}/events/${eventId}/predicted-wait`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('authToken') || ''}`,
+        },
+      }
+    );
+
     if (!res.ok) return null;
+
     const data = await res.json();
     return data.minutes_remaining ?? null;
   } catch {
@@ -31,22 +44,48 @@ export const calculateDynamicWaitTime = (
 
   if (event.type === 'capacity-based') {
     const capacityEvent = event as CapacityBasedEvent;
+
     if (capacityEvent.queueMode === 'multiple' && entry.queueId) {
-      relevantEntries = relevantEntries.filter(e => e.queueId === entry.queueId);
+      relevantEntries = relevantEntries.filter(
+        e => e.queueId === entry.queueId
+      );
     }
   }
 
-  relevantEntries.sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
+  relevantEntries.sort(
+    (a, b) =>
+      new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime()
+  );
 
-  const position = relevantEntries.findIndex(e => e.id === entry.id) + 1;
-  const peopleAhead = position - 1;
+  const position =
+    relevantEntries.findIndex(e => e.id === entry.id) + 1;
+
+  const queueSize = relevantEntries.length || 1;
+
+  const backendWait = backendWaitCache[entry.eventId];
 
   if (event.type === 'capacity-based') {
     const capacityEvent = event as CapacityBasedEvent;
-    return peopleAhead * capacityEvent.estimatedWaitPerPerson;
-  } else if (event.type === 'table-based') {
+
+    const totalQueueWait =
+      backendWait !== undefined
+        ? backendWait
+        : capacityEvent.estimatedWaitPerPerson;
+
+    const wait = (totalQueueWait / queueSize) * (position - 1);
+
+    return Math.round(wait);
+  }
+
+  if (event.type === 'table-based') {
     const tableEvent = event as TableBasedEvent;
-    return Math.round(peopleAhead * (tableEvent.reservationDuration / tableEvent.averageTableSize));
+
+    const totalQueueWait =
+      tableEvent.reservationDuration * queueSize;
+
+    const wait = (totalQueueWait / queueSize) * (position - 1);
+
+    return Math.round(wait);
   }
 
   return entry.estimatedWait;
