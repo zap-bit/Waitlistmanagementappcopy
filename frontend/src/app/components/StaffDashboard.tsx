@@ -42,6 +42,8 @@ import {
   CapacityBasedEvent,
   SimpleCapacityEvent,
   syncEventToSupabase,
+  patchEventQueues,
+  patchEventInSupabase,
 } from "../utils/events";
 import { getStoredUser, User } from "../utils/auth";
 import { Profile } from "./Profile";
@@ -2158,6 +2160,9 @@ export function StaffDashboard({
                                       queues: updatedQueues,
                                     },
                                   );
+                                  if (updatedQueues) {
+                                    patchEventQueues(selectedEvent.id, updatedQueues);
+                                  }
                                 }
 
                                 // Reload events to reflect changes
@@ -2235,6 +2240,9 @@ export function StaffDashboard({
                                       queues: updatedQueues,
                                     },
                                   );
+                                  if (updatedQueues) {
+                                    patchEventQueues(selectedEvent.id, updatedQueues);
+                                  }
                                 }
 
                                 // Reload events to reflect changes
@@ -3113,8 +3121,12 @@ export function StaffDashboard({
             setEventToEdit(null);
           }}
           onCreateEvent={(event) => {
-            // Update event in storage
+            // Update event in storage and sync to Supabase
             updateEventFull(event);
+            patchEventInSupabase(event);
+            if (event.type === 'capacity-based' && (event as CapacityBasedEvent).queues?.length) {
+              patchEventQueues(event.id, (event as CapacityBasedEvent).queues!);
+            }
 
             // Refresh events list
             const updatedActiveEvents =

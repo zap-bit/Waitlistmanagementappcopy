@@ -13,7 +13,28 @@ eventsRouter.get('/', async (req, res, next) => {
   else query = query.eq('archived', false);
 
   const { data, error } = await query;
-  if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to fetch events'));
+  if (error) return next(new ApiError(500, 'SERVER_ERROR', error.message));
+
+  // Attach event_queues to each event (separate query so events always load even if this fails)
+  if (data && data.length > 0) {
+    const eventIds = (data as Record<string, unknown>[]).map(e => e.uuid as string);
+    const { data: queuesData } = await supabase
+      .from('event_queues')
+      .select('*')
+      .in('event_uuid', eventIds);
+    if (queuesData) {
+      const byEvent: Record<string, unknown[]> = {};
+      for (const q of queuesData as Record<string, unknown>[]) {
+        const eid = q.event_uuid as string;
+        if (!byEvent[eid]) byEvent[eid] = [];
+        byEvent[eid].push(q);
+      }
+      for (const e of data as Record<string, unknown>[]) {
+        e.event_queues = byEvent[e.uuid as string] ?? [];
+      }
+    }
+  }
+
   return res.json({ data });
 });
 
@@ -51,6 +72,8 @@ eventsRouter.post('/', requireRole('staff'), async (req, res, next) => {
     no_show_policy: payload.no_show_policy ?? null,
     no_show_rate: payload.no_show_rate ?? null,
     avg_service_time: payload.avg_service_time ?? null,
+    event_code: payload.event_code ?? null,
+    public: payload.is_public ?? true,
   };
 
   const { data, error } = await supabase.from('events').insert(insertPayload).select('*').single();
@@ -80,6 +103,35 @@ eventsRouter.delete('/:eventId', requireRole('staff'), async (req, res, next) =>
 
   const { error } = await supabase.from('events').update({ archived: true }).eq('uuid', req.params.eventId);
   if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to archive event'));
+
+  return res.json({ ok: true });
+});
+
+eventsRouter.put('/:eventId/queues', requireRole('staff'), async (req, res, next) => {
+  const { eventId } = req.params;
+  const queues: Array<Record<string, unknown>> = req.body?.queues ?? [];
+
+  const { data: existing } = await supabase.from('events').select('uuid,account_uuid').eq('uuid', eventId).maybeSingle();
+  if (!existing) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Event not found', { eventId }));
+  if (!req.authUser?.businessId || existing.account_uuid !== req.authUser.businessId) {
+    return next(new ApiError(403, 'FORBIDDEN', 'You cannot modify this event'));
+  }
+
+  const { error: delError } = await supabase.from('event_queues').delete().eq('event_uuid', eventId);
+  if (delError) return next(new ApiError(500, 'SERVER_ERROR', delError.message));
+
+  if (queues.length > 0) {
+    const rows = queues.map((q) => ({
+      event_uuid: eventId,
+      name: String(q.name || '').trim(),
+      capacity: Number(q.capacity) || 0,
+      current_count: Number(q.currentCount) || 0,
+      manual_offset: Number(q.manualOffset) || 0,
+      event_datetime: q.eventDateTime ? new Date(String(q.eventDateTime)).toISOString() : null,
+    }));
+    const { error: insError } = await supabase.from('event_queues').insert(rows);
+    if (insError) return next(new ApiError(500, 'SERVER_ERROR', insError.message));
+  }
 
   return res.json({ ok: true });
 });

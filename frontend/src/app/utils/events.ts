@@ -179,6 +179,54 @@ export const getEventById = (eventId: string): Event | null => {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
 
+/** Patches core event fields in Supabase when an event is edited. */
+export const patchEventInSupabase = async (event: Event): Promise<void> => {
+  const token = localStorage.getItem('authToken');
+  if (!token) return;
+  const isTable = event.type === 'table-based';
+  const isCapacity = event.type === 'capacity-based' || event.type === 'simple-capacity';
+  try {
+    await fetch(`${API_BASE}/events/${event.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        name: event.name,
+        archived: event.archived ?? false,
+        location: isCapacity ? (event as CapacityBasedEvent).location : null,
+        queue_capacity: isCapacity ? (event as CapacityBasedEvent).capacity : null,
+        est_wait: isCapacity ? (event as CapacityBasedEvent).estimatedWaitPerPerson : null,
+        cap_type: event.type === 'simple-capacity'
+          ? 'ATTENDANCE'
+          : event.type === 'capacity-based'
+            ? ((event as CapacityBasedEvent).queueMode === 'multiple' ? 'MULTI' : 'SINGLE')
+            : null,
+        num_tables: isTable ? (event as TableBasedEvent).numberOfTables : null,
+        avg_size: isTable ? (event as TableBasedEvent).averageTableSize : null,
+        reservation_duration: isTable ? (event as TableBasedEvent).reservationDuration : null,
+        event_code: event.eventCode,
+        public: event.isPublic ?? true,
+      }),
+    });
+  } catch (e) {
+    console.error('Failed to patch event in Supabase:', e);
+  }
+};
+
+/** Replaces all queues for a MULTI-mode event in Supabase (event_queues table). */
+export const patchEventQueues = async (eventId: string, queues: Queue[]): Promise<void> => {
+  const token = localStorage.getItem('authToken');
+  if (!token) return;
+  try {
+    await fetch(`${API_BASE}/events/${eventId}/queues`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ queues }),
+    });
+  } catch (e) {
+    console.error('Failed to patch event queues:', e);
+  }
+};
+
 /** Syncs a locally-created event to Supabase and replaces its local ID with the
  * returned Supabase UUID so future operations use the real ID.
  * Returns the remote UUID on success, null on failure. */
@@ -206,6 +254,8 @@ export const syncEventToSupabase = async (event: Event): Promise<string | null> 
     no_show_policy: isTable ? (event as TableBasedEvent).reservationDuration ? 15 : null : null,
     no_show_rate: null,
     avg_service_time: null,
+    event_code: event.eventCode,
+    is_public: event.isPublic ?? true,
   };
 
   try {
@@ -226,6 +276,13 @@ export const syncEventToSupabase = async (event: Event): Promise<string | null> 
       events[idx] = { ...events[idx], id: remoteUuid };
       saveEvents(events);
     }
+
+    // Sync queues for multi-queue events
+    const queues = (event as CapacityBasedEvent).queues;
+    if (queues && queues.length > 0) {
+      await patchEventQueues(remoteUuid, queues);
+    }
+
     return remoteUuid;
   } catch (e) {
     console.error('Failed to sync event to Supabase:', e);
@@ -253,9 +310,18 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
         status: 'active' as EventStatus,
         createdAt: new Date((e.created_at as string) || Date.now()),
         archived: e.archived as boolean,
-        isPublic: (e.is_public as boolean) ?? true, // Fallback if backend doesn't supply it
-        eventCode: (e.event_code as string) || generateEventCode(), // Fallback if backend doesn't supply it
-        queues: e.event_queues || [],
+        isPublic: (e.public as boolean) ?? true,
+        eventCode: (e.event_code as string) || generateEventCode(),
+        queues: Array.isArray(e.event_queues)
+          ? (e.event_queues as Record<string, unknown>[]).map((q) => ({
+              id: q.uuid as string,
+              name: q.name as string,
+              capacity: (q.capacity as number) || 0,
+              currentCount: (q.current_count as number) || 0,
+              manualOffset: (q.manual_offset as number) || 0,
+              eventDateTime: q.event_datetime ? new Date(q.event_datetime as string) : undefined,
+            }))
+          : [],
       };
 
       if (e.event_type === 'TABLE') {
@@ -288,7 +354,7 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
         capacity: (e.queue_capacity as number) || 100,
         estimatedWaitPerPerson: (e.est_wait as number) || 5,
         location: (e.location as string) || '',
-        currentCount: 0,
+        currentCount: (e.current_count as number) || 0,
         manualOffset: 0,
       } as CapacityBasedEvent;
     });
