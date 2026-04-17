@@ -654,31 +654,23 @@ export function CreateEventModal({
                                     type="date"
                                     value={
                                       queue.eventDateTime
-                                        ? queue.eventDateTime
-                                          .toISOString()
-                                          .split("T")[0]
+                                        ? [
+                                            queue.eventDateTime.getFullYear(),
+                                            String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
+                                            String(queue.eventDateTime.getDate()).padStart(2, "0"),
+                                          ].join("-")
                                         : ""
                                     }
                                     onChange={(e) => {
-                                      const updated = [
-                                        ...queues,
-                                      ];
-                                      const currentTime =
-                                        queue.eventDateTime
-                                          ? queue.eventDateTime
-                                            .toISOString()
-                                            .split("T")[1]
-                                            .slice(0, 5)
-                                          : "";
+                                      const updated = [...queues];
+                                      const currentTime = queue.eventDateTime
+                                        ? `${String(queue.eventDateTime.getHours()).padStart(2, "0")}:${String(queue.eventDateTime.getMinutes()).padStart(2, "0")}`
+                                        : "00:00";
                                       updated[index] = {
                                         ...queue,
-                                        eventDateTime:
-                                          e.target.value &&
-                                            currentTime
-                                            ? new Date(
-                                              `${e.target.value}T${currentTime}:00`,
-                                            )
-                                            : undefined,
+                                        eventDateTime: e.target.value
+                                          ? new Date(`${e.target.value}T${currentTime}:00`)
+                                          : undefined,
                                       };
                                       setQueues(updated);
                                     }}
@@ -691,31 +683,28 @@ export function CreateEventModal({
                                     type="time"
                                     value={
                                       queue.eventDateTime
-                                        ? queue.eventDateTime
-                                          .toISOString()
-                                          .split("T")[1]
-                                          .slice(0, 5)
+                                        ? `${String(queue.eventDateTime.getHours()).padStart(2, "0")}:${String(queue.eventDateTime.getMinutes()).padStart(2, "0")}`
                                         : ""
                                     }
                                     onChange={(e) => {
-                                      const updated = [
-                                        ...queues,
-                                      ];
-                                      const currentDate =
-                                        queue.eventDateTime
-                                          ? queue.eventDateTime
-                                            .toISOString()
-                                            .split("T")[0]
-                                          : "";
+                                      const updated = [...queues];
+                                      const today = new Date();
+                                      const currentDate = queue.eventDateTime
+                                        ? [
+                                            queue.eventDateTime.getFullYear(),
+                                            String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
+                                            String(queue.eventDateTime.getDate()).padStart(2, "0"),
+                                          ].join("-")
+                                        : [
+                                            today.getFullYear(),
+                                            String(today.getMonth() + 1).padStart(2, "0"),
+                                            String(today.getDate()).padStart(2, "0"),
+                                          ].join("-");
                                       updated[index] = {
                                         ...queue,
-                                        eventDateTime:
-                                          currentDate &&
-                                            e.target.value
-                                            ? new Date(
-                                              `${currentDate}T${e.target.value}:00`,
-                                            )
-                                            : undefined,
+                                        eventDateTime: e.target.value
+                                          ? new Date(`${currentDate}T${e.target.value}:00`)
+                                          : undefined,
                                       };
                                       setQueues(updated);
                                     }}

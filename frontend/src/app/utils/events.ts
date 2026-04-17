@@ -187,14 +187,19 @@ export const syncEventToSupabase = async (event: Event): Promise<string | null> 
   if (!token) return null;
 
   const isTable = event.type === 'table-based';
+  const isCapacity = event.type === 'capacity-based' || event.type === 'simple-capacity';
   const payload: Record<string, unknown> = {
     name: event.name,
     event_type: isTable ? 'TABLE' : 'CAPACITY',
     archived: event.archived ?? false,
-    location: !isTable ? (event as CapacityBasedEvent).location : null,
-    queue_capacity: !isTable ? (event as CapacityBasedEvent).capacity : null,
-    est_wait: !isTable ? (event as CapacityBasedEvent).estimatedWaitPerPerson : null,
-    cap_type: !isTable ? 'SINGLE' : null,
+    location: isCapacity ? (event as CapacityBasedEvent).location : null,
+    queue_capacity: isCapacity ? (event as CapacityBasedEvent).capacity : null,
+    est_wait: isCapacity ? (event as CapacityBasedEvent).estimatedWaitPerPerson : null,
+    cap_type: event.type === 'simple-capacity'
+      ? 'ATTENDANCE'
+      : event.type === 'capacity-based'
+        ? ((event as CapacityBasedEvent).queueMode === 'multiple' ? 'MULTI' : 'SINGLE')
+        : null,
     num_tables: isTable ? (event as TableBasedEvent).numberOfTables : null,
     avg_size: isTable ? (event as TableBasedEvent).averageTableSize : null,
     reservation_duration: isTable ? (event as TableBasedEvent).reservationDuration : null,
@@ -265,15 +270,26 @@ export const loadEventsFromSupabase = async (): Promise<void> => {
         } as TableBasedEvent;
       }
 
+      if (e.cap_type === 'ATTENDANCE') {
+        return {
+          ...base,
+          type: 'simple-capacity' as const,
+          capacity: (e.queue_capacity as number) || 100,
+          estimatedWaitPerPerson: (e.est_wait as number) || 5,
+          location: (e.location as string) || '',
+          currentCount: (e.current_count as number) || 0,
+        } as SimpleCapacityEvent;
+      }
+
       return {
         ...base,
         type: 'capacity-based' as const,
-        queueMode: 'single' as const,
+        queueMode: (e.cap_type === 'MULTI' ? 'multiple' : 'single') as QueueMode,
         capacity: (e.queue_capacity as number) || 100,
         estimatedWaitPerPerson: (e.est_wait as number) || 5,
         location: (e.location as string) || '',
         currentCount: 0,
-        manualOffset: 0, // Default to 0 for incoming events
+        manualOffset: 0,
       } as CapacityBasedEvent;
     });
 

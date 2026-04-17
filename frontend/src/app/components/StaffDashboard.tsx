@@ -24,6 +24,7 @@ import {
   Eye,
   EyeOff,
   ArrowLeft,
+  Filter,
 } from "lucide-react";
 import { toast } from "sonner";
 import { WaitlistEntry } from "../App";
@@ -239,6 +240,10 @@ export function StaffDashboard({
   const [selectedQueueName, setSelectedQueueName] = useState<
     string | undefined
   >();
+  const [eventTypeFilter, setEventTypeFilter] = useState<
+    "all" | "capacity-based" | "table-based" | "simple-capacity"
+  >("all");
+  const [filterOpen, setFilterOpen] = useState(false);
 
   // Filter events by businessId on mount and refresh
   useEffect(() => {
@@ -358,55 +363,45 @@ export function StaffDashboard({
     return () => clearInterval(interval);
   }, [user.businessId, selectedEvent?.id]);
 
-  // Auto-create default line for single-queue events
+  // Reset and populate queue lines whenever the selected event changes
   useEffect(() => {
-    if (
-      selectedEvent &&
-      selectedEvent.type === "capacity-based"
-    ) {
-      const capacityEvent = selectedEvent as CapacityBasedEvent;
-      if (
-        capacityEvent.queueMode === "single" &&
-        attractions.length === 0
-      ) {
-        // Create a default line with the same name as the event
-        const defaultLine: Attraction = {
-          id: "default-single-queue",
-          name: selectedEvent.name,
-          waitTime: capacityEvent.estimatedWaitPerPerson || 30,
-          queueSize: capacityEvent.currentCount || 0,
-          queueCapacity: capacityEvent.capacity || 100,
-          throughput: 240, // default throughput
-          status: "open",
-          autoCalculateWait: true,
-        };
-        setAttractions([defaultLine]);
-      } else if (capacityEvent.queueMode === "multiple") {
-        // Load queues from the event if they exist
-        if (
-          capacityEvent.queues &&
-          capacityEvent.queues.length > 0
-        ) {
-          const attractionsFromQueues: Attraction[] =
-            capacityEvent.queues.map((queue) => ({
-              id: queue.id,
-              name: queue.name,
-              waitTime:
-                capacityEvent.estimatedWaitPerPerson || 30,
-              queueSize: queue.currentCount || 0,
-              queueCapacity: queue.capacity,
-              throughput: 240, // default throughput
-              status: "open",
-              autoCalculateWait: true,
-            }));
-          setAttractions(attractionsFromQueues);
-        } else if (attractions.length === 0) {
-          // No queues defined yet, start with empty
-          setAttractions([]);
-        }
+    if (!selectedEvent || selectedEvent.type !== "capacity-based") {
+      setAttractions([]);
+      return;
+    }
+
+    const capacityEvent = selectedEvent as CapacityBasedEvent;
+    if (capacityEvent.queueMode === "single") {
+      setAttractions([{
+        id: "default-single-queue",
+        name: selectedEvent.name,
+        waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+        queueSize: capacityEvent.currentCount || 0,
+        queueCapacity: capacityEvent.capacity || 100,
+        throughput: 240,
+        status: "open",
+        autoCalculateWait: true,
+      }]);
+    } else {
+      // multiple mode — load queues from event, or start empty
+      if (capacityEvent.queues && capacityEvent.queues.length > 0) {
+        setAttractions(
+          capacityEvent.queues.map((queue) => ({
+            id: queue.id,
+            name: queue.name,
+            waitTime: capacityEvent.estimatedWaitPerPerson || 30,
+            queueSize: queue.currentCount || 0,
+            queueCapacity: queue.capacity,
+            throughput: 240,
+            status: "open",
+            autoCalculateWait: true,
+          }))
+        );
+      } else {
+        setAttractions([]);
       }
     }
-  }, [selectedEvent]);
+  }, [selectedEvent?.id]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -447,6 +442,16 @@ export function StaffDashboard({
   const simulateSync = () => {
     setIsSyncing(true);
     setTimeout(() => setIsSyncing(false), 1000);
+  };
+
+  const patchEventCount = (eventId: string, count: number) => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    fetch(`${API_BASE}/events/${eventId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ current_count: count }),
+    }).catch(() => {});
   };
 
   const handleDecreaseCapacity = () => {
@@ -1269,8 +1274,74 @@ export function StaffDashboard({
                 </button>
               </div>
             ) : (
-              <div className="flex flex-col gap-5">
-                {events.map((event) => {
+              <>
+                {/* Filter Toggle Button */}
+                <div className="mb-5">
+                  <button
+                    onClick={() => setFilterOpen(!filterOpen)}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    {filterOpen ? (
+                      <X className="w-4 h-4" />
+                    ) : (
+                      <Filter className="w-4 h-4" />
+                    )}
+                    Filter
+                    {eventTypeFilter !== "all" && (
+                      <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    )}
+                  </button>
+
+                  {filterOpen && (
+                    <div className="flex items-center gap-2 mt-3 flex-wrap">
+                      {(
+                        [
+                          { label: "All", value: "all", color: "gray" },
+                          { label: "Capacity-Based", value: "capacity-based", color: "blue" },
+                          { label: "Table-Based", value: "table-based", color: "purple" },
+                          { label: "Attendance Tracker", value: "simple-capacity", color: "green" },
+                        ] as const
+                      ).map(({ label, value, color }) => (
+                        <button
+                          key={value}
+                          onClick={() => setEventTypeFilter(value)}
+                          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                            eventTypeFilter === value
+                              ? color === "gray"
+                                ? "bg-gray-800 text-white"
+                                : color === "blue"
+                                  ? "bg-blue-600 text-white"
+                                  : color === "purple"
+                                    ? "bg-purple-600 text-white"
+                                    : "bg-green-600 text-white"
+                              : color === "gray"
+                                ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                : color === "blue"
+                                  ? "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                                  : color === "purple"
+                                    ? "bg-purple-50 text-purple-700 hover:bg-purple-100"
+                                    : "bg-green-50 text-green-700 hover:bg-green-100"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {(() => {
+                  const filteredEvents =
+                    eventTypeFilter === "all"
+                      ? events
+                      : events.filter((e) => e.type === eventTypeFilter);
+                  return filteredEvents.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">
+                      No events match the selected filter.
+                    </p>
+                  ) : (
+                <div className="flex flex-col gap-5">
+                {filteredEvents.map((event) => {
                   const statusColor =
                     event.status === "active"
                       ? "bg-green-100 text-green-700"
@@ -1547,7 +1618,10 @@ export function StaffDashboard({
                     </div>
                   );
                 })}
-              </div>
+                </div>
+                  );
+                })()}
+              </>
             )}
           </div>
         </div>
@@ -2516,6 +2590,7 @@ export function StaffDashboard({
                   updateEvent(simpleEvent.id, {
                     currentCount: updated.currentCount,
                   });
+                  patchEventCount(simpleEvent.id, updated.currentCount);
                   setSelectedEvent(updated);
                   setEvents(getStoredEvents());
                   toast.success("Count increased");
@@ -2535,6 +2610,7 @@ export function StaffDashboard({
                   updateEvent(simpleEvent.id, {
                     currentCount: updated.currentCount,
                   });
+                  patchEventCount(simpleEvent.id, updated.currentCount);
                   setSelectedEvent(updated);
                   setEvents(getStoredEvents());
                   toast.success("Count decreased");
@@ -2555,6 +2631,7 @@ export function StaffDashboard({
                   updateEvent(simpleEvent.id, {
                     currentCount: updated.currentCount,
                   });
+                  patchEventCount(simpleEvent.id, updated.currentCount);
                   setSelectedEvent(updated);
                   setEvents(getStoredEvents());
                   toast.success("Added 10 people");
@@ -2576,6 +2653,7 @@ export function StaffDashboard({
                   updateEvent(simpleEvent.id, {
                     currentCount: updated.currentCount,
                   });
+                  patchEventCount(simpleEvent.id, updated.currentCount);
                   setSelectedEvent(updated);
                   setEvents(getStoredEvents());
                   toast.success("Removed 10 people");
