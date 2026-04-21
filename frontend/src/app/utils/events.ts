@@ -146,11 +146,22 @@ export const restoreEvent = (eventId: string) => {
   }
 };
 
-// Permanently delete an event
-export const deleteEvent = (eventId: string) => {
+// Permanently delete an event (localStorage + Supabase)
+export const deleteEvent = async (eventId: string): Promise<void> => {
   const events = getStoredEvents();
   const filtered = events.filter(e => e.id !== eventId);
   saveEvents(filtered);
+
+  const token = localStorage.getItem('authToken');
+  if (!token) return;
+  try {
+    await fetch(`${API_BASE}/events/${eventId}?permanent=true`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (e) {
+    console.error('Failed to permanently delete event from backend:', e);
+  }
 };
 
 // Get active (non-archived) events

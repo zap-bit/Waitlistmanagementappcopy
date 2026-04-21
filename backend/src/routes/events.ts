@@ -101,8 +101,14 @@ eventsRouter.delete('/:eventId', requireRole('staff'), async (req, res, next) =>
     return next(new ApiError(403, 'FORBIDDEN', 'You cannot delete this event'));
   }
 
-  const { error } = await supabase.from('events').update({ archived: true }).eq('uuid', req.params.eventId);
-  if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to archive event'));
+  // permanent=true → hard delete; default → soft archive
+  if (req.query.permanent === 'true') {
+    const { error } = await supabase.from('events').delete().eq('uuid', req.params.eventId);
+    if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to permanently delete event'));
+  } else {
+    const { error } = await supabase.from('events').update({ archived: true }).eq('uuid', req.params.eventId);
+    if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to archive event'));
+  }
 
   return res.json({ ok: true });
 });

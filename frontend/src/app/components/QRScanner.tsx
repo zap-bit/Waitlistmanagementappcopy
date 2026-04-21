@@ -15,6 +15,9 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
   const hasScannedRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Stable ref so the scanner callback never closes over a stale onScan
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
 
   useEffect(() => {
     let isMounted = true;
@@ -54,13 +57,13 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
             console.log('QR Code detected:', decodedText);
             if (!hasScannedRef.current && isMounted) {
               hasScannedRef.current = true;
-              
+
               // Stop scanner before callback
               scanner.clear().then(() => {
-                onScan(decodedText);
+                onScanRef.current(decodedText);
               }).catch(err => {
                 console.error('Error clearing scanner:', err);
-                onScan(decodedText);
+                onScanRef.current(decodedText);
               });
             }
           },
@@ -113,12 +116,13 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
         scannerRef.current = null;
       }
     };
-  }, [onScan]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount — onScan changes are handled via onScanRef
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (manualCode.trim()) {
-      onScan(manualCode.trim().toUpperCase());
+      onScanRef.current(manualCode.trim().toUpperCase());
     }
   };
 

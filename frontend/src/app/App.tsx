@@ -105,12 +105,14 @@ export default function App() {
   // Stable ref so the online handler can call setWaitlist without being in its dep array
   const setWaitlistRef = useRef(setWaitlist);
 
-  // Check for logged in user on mount
+  // Check for logged in user on mount; refresh events if already authenticated
   useEffect(() => {
     const storedUser = getStoredUser();
     if (storedUser) {
       setUser(storedUser);
       setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
+      // Refresh from Supabase so archived/new events are up-to-date on page reload
+      loadEventsFromSupabase().catch(() => {});
     } else {
       setAuthScreen('welcome');
     }
@@ -202,7 +204,7 @@ export default function App() {
           remoteId: p.uuid as string,
           name: parts[0] || p.name || 'Guest',
           partySize: (p.party_size as number) || 1,
-          joinedAt: new Date((p.created_at as string) || Date.now()),
+          joinedAt: new Date((p.joined_at as string) || Date.now()),
           estimatedWait: p.estimated_wait || 15,
           specialRequests: parts[1] || undefined,
           // Map the specific database columns here:

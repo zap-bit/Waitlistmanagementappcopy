@@ -44,6 +44,7 @@ import {
   syncEventToSupabase,
   patchEventQueues,
   patchEventInSupabase,
+  loadEventsFromSupabase,
 } from "../utils/events";
 import { getStoredUser, User } from "../utils/auth";
 import { Profile } from "./Profile";
@@ -270,6 +271,16 @@ export function StaffDashboard({
       );
       setEvents(activeEvents);
       setArchivedEvents(archived);
+
+      // When viewing archived page, pull fresh data from Supabase so recently
+      // archived events appear without requiring a full page reload.
+      if (currentPage === "archived") {
+        loadEventsFromSupabase().then(() => {
+          setArchivedEvents(
+            getArchivedEvents().filter((e) => e.businessId === user.businessId),
+          );
+        }).catch(() => {});
+      }
     }
   }, [currentPage, user.businessId]);
 
@@ -295,7 +306,7 @@ export function StaffDashboard({
                 remoteId: p.uuid as string,
                 name: parts[0] || p.name || 'Guest',
                 partySize: (p.party_size as number) || 1,
-                joinedAt: new Date((p.created_at as string) || Date.now()),
+                joinedAt: new Date((p.joined_at as string) || Date.now()),
                 estimatedWait: p.estimated_wait || 15,
                 specialRequests: parts[1] || undefined,
                 // Map the specific database columns here:
@@ -403,7 +414,8 @@ export function StaffDashboard({
         setAttractions([]);
       }
     }
-  }, [selectedEvent?.id]);
+  // Also re-run when the queue list gains entries (async Supabase load)
+  }, [selectedEvent?.id, (selectedEvent as CapacityBasedEvent)?.queues?.length]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -953,6 +965,16 @@ export function StaffDashboard({
 
     toast.success(`${table.name} cleared`);
     simulateSync();
+
+    // Wipe seated guest data from Supabase (including account_uuid so attendee polling detects the change)
+    const token = localStorage.getItem('authToken');
+    if (token && selectedEvent) {
+      fetch(`${API_BASE}/events/${selectedEvent.id}/staff/clear-table`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ tableId }),
+      }).catch(err => console.error('Failed to sync table clear to server:', err));
+    }
   };
 
   const handleClearAllTables = () => {
@@ -1811,13 +1833,13 @@ export function StaffDashboard({
                           Restore
                         </button>
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             if (
                               confirm(
                                 `Permanently delete "${event.name}"? This cannot be undone.`,
                               )
                             ) {
-                              deleteEvent(event.id);
+                              await deleteEvent(event.id);
                               toast.success(
                                 `Event "${event.name}" permanently deleted`,
                               );

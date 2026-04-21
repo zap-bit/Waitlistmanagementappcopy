@@ -71,7 +71,13 @@ staffRouter.post('/seat', async (req, res, next) => {
   if (tableId !== undefined) {
     await supabase
       .from('event_table')
-      .update({ occupied: true })
+      .update({
+        occupied: true,
+        account_uuid: entry.account_uuid,
+        guest_name: entry.name,
+        party_size: entry.party_size,
+        seated_at: new Date().toISOString(),
+      })
       .eq('event_uuid', eventId)
       .eq('table_number', tableId);
   }
@@ -87,7 +93,13 @@ staffRouter.post('/clear-table', async (req, res, next) => {
 
   const { error } = await supabase
     .from('event_table')
-    .update({ occupied: false })
+    .update({
+      occupied: false,
+      account_uuid: null,
+      guest_name: null,
+      party_size: null,
+      seated_at: null,
+    })
     .eq('event_uuid', eventId)
     .eq('table_number', tableId);
 

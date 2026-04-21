@@ -97,6 +97,19 @@ export function AttendeeView({
   const [menuOpen, setMenuOpen] = useState(false);
   const [showMyEvents, setShowMyEvents] = useState(false);
 
+  // Info about a table the user is currently seated at
+  interface SeatedTableInfo {
+    tableNumber: number;
+    tableName: string;
+    eventId: string;
+    eventName: string;
+    seatedAt: Date;
+  }
+
+  const [seatedTableInfo, setSeatedTableInfo] = useState<SeatedTableInfo | null>(null);
+  // Track previous seated state so we can detect when the table is cleared
+  const prevSeatedRef = useRef<SeatedTableInfo | null>(null);
+
   // Past events that user has been seated for
   interface PastEvent {
     id: string;
@@ -292,6 +305,119 @@ export function AttendeeView({
     }
   }, [pastEvents]);
 
+  // On mount: load history + current seated state together.
+  // History entries NOT currently seated → past events (handles the case where
+  // the table was cleared while the user was away / app was closed).
+  // History entries that ARE currently seated → show the "Currently Seated" tile.
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
+    const headers = { Authorization: `Bearer ${token}` };
+
+    Promise.all([
+      fetch(`${apiBase}/auth/me/history`, { headers }).then(r => r.ok ? r.json() : { data: [] }),
+      fetch(`${apiBase}/auth/me/seated`,  { headers }).then(r => r.ok ? r.json() : { data: [] }),
+    ]).then(([historyRes, seatedRes]) => {
+      const historyData: Array<{ id: string; eventId: string; eventName: string; seatedAt: string }> =
+        Array.isArray(historyRes.data) ? historyRes.data : [];
+      const seatedData: Array<{ tableNumber: number; tableName: string; eventId: string; eventName: string; seatedAt: string }> =
+        Array.isArray(seatedRes.data) ? seatedRes.data : [];
+
+      // Seed prevSeatedRef so the polling loop can detect future table-clear transitions
+      if (seatedData.length > 0) {
+        const first = seatedData[0];
+        const info: SeatedTableInfo = {
+          tableNumber: first.tableNumber,
+          tableName: first.tableName,
+          eventId: first.eventId,
+          eventName: first.eventName,
+          seatedAt: new Date(first.seatedAt),
+        };
+        prevSeatedRef.current = info;
+        setSeatedTableInfo(info);
+      }
+
+      // History entries whose event is NOT in a currently-occupied table → past events
+      const currentlySeatedEventIds = new Set(seatedData.map(s => s.eventId));
+      const completedHistory = historyData.filter(h => !currentlySeatedEventIds.has(h.eventId));
+
+      if (completedHistory.length > 0) {
+        setPastEvents(prev => {
+          const existingIds = new Set(prev.map(e => e.id));
+          const incoming = completedHistory
+            .filter(d => !existingIds.has(d.id))
+            .map(d => ({
+              id: d.id,
+              eventId: d.eventId,
+              eventName: d.eventName,
+              name: user.name || 'You',
+              partySize: 1,
+              type: 'waitlist' as const,
+              seatedAt: new Date(d.seatedAt),
+            }));
+          return incoming.length > 0 ? [...incoming, ...prev].slice(0, 50) : prev;
+        });
+      }
+    }).catch(() => { /* silently ignore — local state stays */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
+
+  // Poll every 10 s to detect real-time table-clear events while the app is open.
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/v1';
+
+    const checkSeated = () => {
+      fetch(`${apiBase}/auth/me/seated`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.ok ? r.json() : Promise.reject(r))
+        .then(({ data }: { data: Array<{ tableNumber: number; tableName: string; eventId: string; eventName: string; seatedAt: string }> }) => {
+          if (Array.isArray(data) && data.length > 0) {
+            const first = data[0];
+            const info: SeatedTableInfo = {
+              tableNumber: first.tableNumber,
+              tableName: first.tableName,
+              eventId: first.eventId,
+              eventName: first.eventName,
+              seatedAt: new Date(first.seatedAt),
+            };
+            prevSeatedRef.current = info;
+            setSeatedTableInfo(info);
+          } else {
+            // Table was cleared — prevSeatedRef is seeded by either the mount effect
+            // or a previous poll, so this branch always runs correctly.
+            if (prevSeatedRef.current) {
+              const prev = prevSeatedRef.current;
+              setPastEvents(existing => {
+                if (existing.find(e => e.id === `table-${prev.tableNumber}-${prev.eventId}`)) return existing;
+                const pastEvent: PastEvent = {
+                  id: `table-${prev.tableNumber}-${prev.eventId}`,
+                  eventName: prev.eventName,
+                  eventId: prev.eventId,
+                  name: user.name || 'You',
+                  partySize: 1,
+                  type: 'waitlist',
+                  seatedAt: prev.seatedAt,
+                };
+                return [pastEvent, ...existing].slice(0, 50);
+              });
+              toast.success(`Thank you for visiting ${prev.eventName}! Your table has been cleared.`);
+              prevSeatedRef.current = null;
+            }
+            setSeatedTableInfo(null);
+          }
+        })
+        .catch(() => { /* silent — keep current state */ });
+    };
+
+    const interval = setInterval(checkSeated, 10_000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
+
   // When Supabase entries arrive (after login load or poll), sync them into myWaitlistIds
   useEffect(() => {
     if (allWaitlistEntries.length === 0) return;
@@ -352,45 +478,29 @@ export function AttendeeView({
               | "waitlist") || "waitlist";
           const isTableBased = event?.type === "table-based";
 
-          // Add to past events
-          const pastEvent: PastEvent = {
-            id,
-            eventName,
-            eventId: event?.id || "",
-            name,
-            partySize,
-            type,
-            seatedAt: new Date(),
-          };
-
-          setPastEvents((prev) =>
-            [pastEvent, ...prev].slice(0, 50),
-          ); // Keep last 50
-
-          // Show notification immediately
           if (isTableBased) {
-            if (type === "reservation") {
-              toast.success(
-                `You've been seated! Your table is ready at ${eventName}`,
-                {
-                  duration: 6000,
-                },
-              );
-            } else {
-              toast.success(
-                `You've been seated at ${eventName}!`,
-                {
-                  duration: 6000,
-                },
-              );
-            }
+            // For table-based events: the attendee is now seated at a table.
+            // Show a toast but do NOT add to pastEvents yet — the polling effect
+            // will detect when the table is cleared and then move it to pastEvents.
+            toast.success(
+              `You've been seated at ${eventName}! Check "My Events" for your table.`,
+              { duration: 8000 },
+            );
           } else {
-            // ADD THIS ELSE BLOCK to handle capacity-based events
+            // For capacity-based events (no physical table): move to past events immediately.
+            const pastEvent: PastEvent = {
+              id,
+              eventName,
+              eventId: event?.id || "",
+              name,
+              partySize,
+              type,
+              seatedAt: new Date(),
+            };
+            setPastEvents((prev) => [pastEvent, ...prev].slice(0, 50));
             toast.success(
               `It's your turn at ${eventName}! Please head to the front.`,
-              {
-                duration: 6000,
-              },
+              { duration: 6000 },
             );
           }
 
@@ -2506,6 +2616,39 @@ export function AttendeeView({
                     </button>
                   </div>
                 </>
+              )}
+
+              {/* Currently Seated Section */}
+              {seatedTableInfo && (
+                <div className="pt-6 mt-6 border-t-2 border-green-200">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <Users className="w-5 h-5 text-green-600" />
+                    Currently Seated
+                  </h3>
+                  <div className="p-4 border-2 border-green-400 rounded-xl bg-green-50 animate-pulse-slow">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <h4 className="font-bold text-green-900 text-lg">
+                          {seatedTableInfo.tableName}
+                        </h4>
+                        <p className="text-sm text-green-700">
+                          {seatedTableInfo.eventName}
+                        </p>
+                      </div>
+                      <div className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
+                        Seated ✓
+                      </div>
+                    </div>
+                    <p className="text-xs text-green-600 mt-2">
+                      Seated at{" "}
+                      {seatedTableInfo.seatedAt.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                      {" · "}This card will move to Past Events when your table is cleared.
+                    </p>
+                  </div>
+                </div>
               )}
 
               {/* Past Events Section - Always visible */}
