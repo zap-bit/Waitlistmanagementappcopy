@@ -2,15 +2,15 @@ import { useState, useEffect } from "react";
 import { StatusBar } from "./StatusBar";
 import { QRScanner } from "./QRScanner";
 import {
-  QrCode, Clock, Users, LogOut, X, Calendar, ListOrdered, Search, Ticket, User as UserIcon, Menu,
+  QrCode, Clock, Users, LogOut, X, Calendar, ListOrdered, Search, Ticket, User as UserIcon, Menu, AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { WaitlistEntry } from "../App";
-import { Table } from "./TableGrid";
-import { getStoredEvents, Event, CapacityBasedEvent, Queue } from "../utils/events";
+import { getStoredEvents, Event, CapacityBasedEvent, TableBasedEvent, Queue } from "../utils/events";
 import { Profile, getSavedProfile } from "./Profile";
 import { User } from "../utils/auth";
 import { calculateDynamicWaitTime, fetchPredictedWait } from "../utils/waitTime";
+import { Table } from "./TableGrid";
 
 interface AttendeeViewProps {
   onLogout: () => void;
@@ -144,6 +144,7 @@ export function AttendeeView({
             numberOfTables: (e.num_tables as number) || 10,
             averageTableSize: (e.avg_size as number) || 4,
             reservationDuration: (e.reservation_duration as number) || 90,
+            noShowPolicy: (e.no_show_policy as string) || "Hold table for 15 minutes", // MAP NO-SHOW POLICY
           }));
           serverEvents = mapped.filter((e: { archived: boolean }) => !e.archived);
           loadEvents();
@@ -410,6 +411,12 @@ export function AttendeeView({
       return;
     }
 
+    // REQUIRED FIELDS VALIDATION: Prevent empty date or time
+    if (joinType === "reservation" && (!reservationDate || !reservationTime)) {
+      toast.error("Please select both a date and time for your reservation.");
+      return;
+    }
+
     if (selectedEvent.type === "capacity-based" && joinType === "waitlist") {
       const capacityEvent = selectedEvent as CapacityBasedEvent;
       let queueCapacity = 0;
@@ -438,19 +445,11 @@ export function AttendeeView({
     }
 
     let reservationDateTime: Date | undefined = undefined;
-    if (reservationTime) {
-      let year: number, month: number, day: number;
-      if (reservationDate) {
-        const parts = reservationDate.split("-");
-        year = parseInt(parts[0]);
-        month = parseInt(parts[1]) - 1;
-        day = parseInt(parts[2]);
-      } else {
-        const now = new Date();
-        year = now.getFullYear();
-        month = now.getMonth();
-        day = now.getDate();
-      }
+    if (reservationTime && reservationDate) {
+      const parts = reservationDate.split("-");
+      const year = parseInt(parts[0]);
+      const month = parseInt(parts[1]) - 1;
+      const day = parseInt(parts[2]);
       const [hours, minutes] = reservationTime.split(":");
       reservationDateTime = new Date(year, month, day, parseInt(hours), parseInt(minutes));
     }
@@ -480,16 +479,18 @@ export function AttendeeView({
     }
 
     if (isTableBasedReservation && selectedWaitlistId) {
+      // REQUIRED FIELDS VALIDATION: Prevent empty date or time when editing
+      if (!reservationDate || !reservationTime) {
+        toast.error("Please select both a date and time for your reservation.");
+        return;
+      }
+
       let reservationDateTime: Date | undefined = undefined;
-      if (reservationTime) {
-        let year: number, month: number, day: number;
-        if (reservationDate) {
-          const parts = reservationDate.split("-");
-          year = parseInt(parts[0]); month = parseInt(parts[1]) - 1; day = parseInt(parts[2]);
-        } else {
-          const now = new Date();
-          year = now.getFullYear(); month = now.getMonth(); day = now.getDate();
-        }
+      if (reservationTime && reservationDate) {
+        const parts = reservationDate.split("-");
+        const year = parseInt(parts[0]);
+        const month = parseInt(parts[1]) - 1;
+        const day = parseInt(parts[2]);
         const [hours, minutes] = reservationTime.split(":");
         reservationDateTime = new Date(year, month, day, parseInt(hours), parseInt(minutes));
       }
@@ -805,12 +806,12 @@ export function AttendeeView({
 
                 <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Your Name *</label>
                     <input type="text" value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="Enter your name" className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Party Size</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Party Size *</label>
                     <input type="number" min="1" max={selectedEvent.type === "capacity-based" && joinType === "waitlist" ? (() => {
                       const capacityEvent = selectedEvent as CapacityBasedEvent;
                       let queueCapacity = 0; let currentQueueSize = 0;
@@ -831,14 +832,14 @@ export function AttendeeView({
                   {joinType === "reservation" && (
                     <>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Date</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Date *</label>
                         <div className="relative">
                           <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                           <input type="date" value={reservationDate} onChange={(e) => setReservationDate(e.target.value)} className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
                         </div>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Time</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Time *</label>
                         <div className="relative">
                           <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                           <input type="time" value={reservationTime} onChange={(e) => setReservationTime(e.target.value)} className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -951,10 +952,24 @@ export function AttendeeView({
               <div className={myEntry?.type === "waitlist" || (myEntry?.type === "reservation" && myEntry?.reservationTime) ? "pt-0" : ""}>
                 <div className="flex items-center justify-between text-sm mb-3"><span className="text-gray-600">Guest Name</span><span className="font-semibold">{myEntry?.name}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-gray-600">Party Size</span><span className="font-semibold">{myEntry?.partySize} people</span></div>
+
                 {myEntry?.specialRequests && (
                   <div className="mt-3 pt-3 border-t border-gray-200">
                     <div className="text-sm text-gray-600 mb-1">Special Requests</div>
                     <div className="text-sm font-medium break-words overflow-hidden">{myEntry.specialRequests}</div>
+                  </div>
+                )}
+
+                {/* NEW CODE: No-Show Policy Warning */}
+                {myEntry?.type === "reservation" && isTableBasedReservation && (myEvent as TableBasedEvent)?.noShowPolicy && (
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    <div className="text-sm text-red-600 mb-1 flex items-center gap-1">
+                      <AlertCircle className="w-4 h-4" />
+                      <span className="font-semibold">No-Show Policy</span>
+                    </div>
+                    <div className="text-sm font-medium text-gray-700 break-words overflow-hidden">
+                      {(myEvent as TableBasedEvent).noShowPolicy}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1005,7 +1020,7 @@ export function AttendeeView({
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
                 <input
                   type="text"
                   value={guestName}
@@ -1016,7 +1031,7 @@ export function AttendeeView({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Party Size</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Party Size *</label>
                 <input
                   type="number"
                   min="1"
@@ -1029,7 +1044,7 @@ export function AttendeeView({
               {isTableBasedReservation && (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Date</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Date *</label>
                     <div className="relative">
                       <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                       <input
@@ -1041,7 +1056,7 @@ export function AttendeeView({
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Time</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Time *</label>
                     <div className="relative">
                       <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                       <input
