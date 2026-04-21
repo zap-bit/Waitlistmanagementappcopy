@@ -97,3 +97,52 @@ waitlistRouter.delete('/:entryId', async (req, res, next) => {
   if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to delete waitlist entry'));
   return res.json({ ok: true });
 });
+
+waitlistRouter.patch('/:entryId', async (req, res, next) => {
+  const { eventId, entryId } = req.params as { eventId: string; entryId: string };
+  const updates = req.body ?? {};
+
+  // Verify the entry exists and the user owns it (or is staff)
+  const { data: entry, error: fetchError } = await supabase
+    .from('party')
+    .select('*')
+    .eq('uuid', entryId)
+    .eq('event_uuid', eventId)
+    .maybeSingle();
+
+  if (fetchError || !entry) return next(new ApiError(404, 'RESOURCE_NOT_FOUND', 'Waitlist entry not found'));
+
+  if (req.authUser?.role !== 'staff' && entry.account_uuid !== req.authUser?.id) {
+    return next(new ApiError(403, 'FORBIDDEN', 'You cannot edit this waitlist entry'));
+  }
+
+  // Prepare the fields to update
+  const updateData: Record<string, any> = {};
+
+  if (updates.name) updateData.name = String(updates.name).trim();
+  if (updates.partySize) updateData.party_size = Number(updates.partySize);
+
+  if (updates.reservationTime !== undefined) {
+    updateData.reservation_time = updates.reservationTime ? new Date(String(updates.reservationTime)).toISOString() : null;
+  }
+
+  // Handle special requests formatting
+  if (updates.specialRequests !== undefined || updates.name) {
+    const baseName = updateData.name || entry.name;
+    updateData.special_req = updates.specialRequests
+      ? `${baseName} | ${String(updates.specialRequests).trim()}`
+      : baseName;
+  }
+
+  // Send update to Supabase
+  const { data, error } = await supabase
+    .from('party')
+    .update(updateData)
+    .eq('uuid', entryId)
+    .select('*')
+    .single();
+
+  if (error) return next(new ApiError(500, 'SERVER_ERROR', 'Failed to update waitlist entry'));
+
+  return res.json(data);
+});

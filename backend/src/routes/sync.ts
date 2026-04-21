@@ -8,7 +8,7 @@ export const syncRouter = Router();
 syncRouter.use(requireAuth);
 
 interface SyncOperation {
-  type: 'ADD_WAITLIST' | 'REMOVE_WAITLIST' | 'ADD_EVENT';
+  type: 'ADD_WAITLIST' | 'REMOVE_WAITLIST' | 'UPDATE_WAITLIST' | 'ADD_EVENT';
   localId: string;
   eventId?: string;
   payload: Record<string, unknown>;
@@ -68,6 +68,34 @@ syncRouter.post('/', async (req, res, next) => {
           if (!remoteId) { errors.push({ localId: op.localId, error: 'remoteId required' }); break; }
           const { error } = await supabase.from('party').delete().eq('uuid', remoteId);
           if (error) { errors.push({ localId: op.localId, error: error.message }); break; }
+          resolved.push({ localId: op.localId, remoteId, type: op.type });
+          break;
+        }
+
+        case 'UPDATE_WAITLIST': {
+          const remoteId = op.payload.remoteId as string | undefined;
+          if (!remoteId) { errors.push({ localId: op.localId, error: 'remoteId required' }); break; }
+
+          const { name, partySize, specialRequests, reservationTime } = op.payload as Record<string, unknown>;
+
+          const updateData: Record<string, any> = {};
+          if (name) updateData.name = String(name).trim();
+          if (partySize) updateData.party_size = Number(partySize);
+          if (reservationTime !== undefined) {
+            updateData.reservation_time = reservationTime ? new Date(String(reservationTime)).toISOString() : null;
+          }
+
+          // Let's grab the current name from the database just in case we need to format the special request correctly
+          const { data: currentEntry } = await supabase.from('party').select('name').eq('uuid', remoteId).maybeSingle();
+          const baseName = updateData.name || currentEntry?.name || 'Guest';
+
+          if (specialRequests !== undefined) {
+            updateData.special_req = specialRequests ? `${baseName} | ${String(specialRequests).trim()}` : baseName;
+          }
+
+          const { error } = await supabase.from('party').update(updateData).eq('uuid', remoteId);
+          if (error) { errors.push({ localId: op.localId, error: error.message }); break; }
+
           resolved.push({ localId: op.localId, remoteId, type: op.type });
           break;
         }

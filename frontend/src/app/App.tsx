@@ -112,7 +112,7 @@ export default function App() {
       setUser(storedUser);
       setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
       // Refresh from Supabase so archived/new events are up-to-date on page reload
-      loadEventsFromSupabase().catch(() => {});
+      loadEventsFromSupabase().catch(() => { });
     } else {
       setAuthScreen('welcome');
     }
@@ -185,7 +185,7 @@ export default function App() {
   };
 
   /** Loads the current user's waitlist entries from Supabase and replaces local state.
-   *  Maps the `party` table rows (where name is encoded as the first segment of special_req). */
+   * Maps the `party` table rows (where name is encoded as the first segment of special_req). */
   const loadWaitlistFromSupabase = async () => {
     const token = localStorage.getItem('authToken');
     if (!token) return;
@@ -390,9 +390,55 @@ export default function App() {
   };
 
   const updateWaitlistEntry = (id: string, updates: Partial<Omit<WaitlistEntry, 'id' | 'joinedAt'>>) => {
-    setWaitlist((prev) => prev.map((entry) =>
-      entry.id === id ? { ...entry, ...updates } : entry
+    // 1. Find the entry before we update state so we have its current values (like eventId and remoteId)
+    const entry = waitlist.find(e => e.id === id);
+
+    // 2. Update local state immediately for fast UI feedback
+    setWaitlist((prev) => prev.map((e) =>
+      e.id === id ? { ...e, ...updates } : e
     ));
+
+    // 3. Sync changes to the backend
+    if (entry?.eventId) {
+      const token = localStorage.getItem('authToken');
+      if (!token || !entry.remoteId) return; // Need remoteId to update on server
+
+      const updateUrl = `${API_BASE}/events/${entry.eventId}/waitlist/${entry.remoteId}`;
+
+      const payload = {
+        name: updates.name,
+        partySize: updates.partySize,
+        specialRequests: updates.specialRequests,
+        reservationTime: updates.reservationTime
+      };
+
+      if (navigator.onLine) {
+        fetch(updateUrl, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        }).catch(() => {
+          // If the fetch fails despite being online (server error), queue it
+          queueOp({
+            type: 'UPDATE_WAITLIST',
+            localId: id,
+            eventId: entry.eventId,
+            payload: { remoteId: entry.remoteId!, ...payload }
+          });
+        });
+      } else {
+        // Offline -> queue it for later
+        queueOp({
+          type: 'UPDATE_WAITLIST',
+          localId: id,
+          eventId: entry.eventId,
+          payload: { remoteId: entry.remoteId, ...payload }
+        });
+      }
+    }
   };
 
   // Show auth screens if not logged in

@@ -205,36 +205,23 @@ authRouter.get('/me/seated', requireAuth, async (req, res, next) => {
 authRouter.get('/me/history', requireAuth, async (req, res, next) => {
   const { data, error } = await supabase
     .from('cap_waitlist')
-    .select('uuid, event_uuid, exit_reason')
+    .select('*')
     .eq('account_uuid', req.authUser!.id)
     .eq('exit_reason', 'SERVED')
     .limit(50);
 
   if (error) {
-    // Log full Supabase error so we can diagnose the root cause
     console.error('[/me/history] Supabase error:', JSON.stringify(error));
-    // Return empty history rather than a 500 — past events will still load from localStorage
     return res.json({ data: [] });
   }
-  if (!data || data.length === 0) return res.json({ data: [] });
 
-  // Fetch event names for each history entry
-  const eventIds = [...new Set((data as Record<string, unknown>[]).map(d => d.event_uuid as string))];
-  const { data: events } = await supabase
-    .from('events')
-    .select('uuid, name')
-    .in('uuid', eventIds);
-
-  const eventMap: Record<string, string> = {};
-  for (const e of (events ?? []) as Record<string, unknown>[]) {
-    eventMap[e.uuid as string] = e.name as string;
-  }
-
-  const history = (data as Record<string, unknown>[]).map(d => ({
-    id: d.uuid as string,
-    eventId: d.event_uuid as string,
-    eventName: eventMap[d.event_uuid as string] || 'Unknown Event',
-    seatedAt: new Date().toISOString(), // cap_waitlist has no timestamp column
+  // Ensure the frontend receives the exact raw column names it expects
+  const history = (data || []).map(d => ({
+    ...d,
+    uuid: d.uuid,
+    event_uuid: d.event_uuid,
+    // Provide a fallback timestamp to prevent the frontend date parser from crashing
+    created_at: d.created_at || new Date().toISOString(),
   }));
 
   return res.json({ data: history });
