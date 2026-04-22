@@ -205,9 +205,10 @@ authRouter.get('/me/seated', requireAuth, async (req, res, next) => {
 authRouter.get('/me/history', requireAuth, async (req, res, next) => {
   const { data, error } = await supabase
     .from('cap_waitlist')
-    .select('*')
+    .select('uuid, event_uuid, created_at')
     .eq('account_uuid', req.authUser!.id)
     .eq('exit_reason', 'SERVED')
+    .order('created_at', { ascending: false })
     .limit(50);
 
   if (error) {
@@ -215,12 +216,21 @@ authRouter.get('/me/history', requireAuth, async (req, res, next) => {
     return res.json({ data: [] });
   }
 
-  // Ensure the frontend receives the exact raw column names it expects
-  const history = (data || []).map(d => ({
-    ...d,
+  const rows = data || [];
+  const eventIds = [...new Set(rows.map(d => d.event_uuid as string))];
+  const { data: events } = eventIds.length
+    ? await supabase.from('events').select('uuid, name').in('uuid', eventIds)
+    : { data: [] };
+
+  const eventMap: Record<string, string> = {};
+  for (const e of (events ?? []) as Record<string, unknown>[]) {
+    eventMap[e.uuid as string] = e.name as string;
+  }
+
+  const history = rows.map(d => ({
     uuid: d.uuid,
     event_uuid: d.event_uuid,
-    // Provide a fallback timestamp to prevent the frontend date parser from crashing
+    event_name: eventMap[d.event_uuid as string] || 'Past Event',
     created_at: d.created_at || new Date().toISOString(),
   }));
 

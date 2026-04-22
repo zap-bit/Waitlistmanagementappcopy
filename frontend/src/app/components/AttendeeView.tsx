@@ -194,10 +194,10 @@ export function AttendeeView({
     return () => clearInterval(interval);
   }, [availableEvents]);
 
-  // BULLETPROOF NOTIFICATIONS: Poll backend history for seating records
+  // Poll backend history for seating records
   useEffect(() => {
     const token = localStorage.getItem('authToken');
-    if (!token || availableEvents.length === 0) return;
+    if (!token) return;
 
     const checkHistory = async () => {
       try {
@@ -214,10 +214,9 @@ export function AttendeeView({
 
           data.forEach((entry: any) => {
             const uniqueKey = entry.uuid || `${entry.event_uuid}-${entry.created_at}`;
-            const event = availableEvents.find(e => e.id === entry.event_uuid);
-            const eventName = event?.name || "your event";
+            // Backend now resolves the event name directly — no availableEvents lookup needed
+            const eventName = entry.event_name || "Past Event";
 
-            // If we haven't seen this backend record before, pop the toast!
             if (!notified.includes(uniqueKey)) {
               toast.success(`You've been seated at ${eventName}!`, { duration: 8000 });
               notified.push(uniqueKey);
@@ -237,12 +236,11 @@ export function AttendeeView({
 
           if (newNotifications) {
             localStorage.setItem('notifiedHistory', JSON.stringify(notified));
-            // Drop them back to the welcome screen if they were staring at the status view
             setViewingStatus(false);
             setSelectedWaitlistId(null);
           }
 
-          setPastEvents(historyEvents.slice(0, 50));
+          setPastEvents(historyEvents);
         }
       } catch (e) {
         console.error('Failed to fetch history:', e);
@@ -250,9 +248,9 @@ export function AttendeeView({
     };
 
     checkHistory();
-    const interval = setInterval(checkHistory, 5000); // Check every 5 seconds
+    const interval = setInterval(checkHistory, 5000);
     return () => clearInterval(interval);
-  }, [availableEvents, user.name]);
+  }, [user.name]);
 
   // Drop view if entry is removed actively
   useEffect(() => {
@@ -1235,9 +1233,16 @@ export function AttendeeView({
                   <Clock className="w-5 h-5 text-gray-500" />
                   Past Events
                 </h3>
-                {pastEvents.filter(e => e.eventId !== seatedTableInfo?.eventId).length > 0 ? (
+                {(() => {
+                  // Hide only the single most-recent history entry for the currently seated event.
+                  // Backend returns entries sorted newest-first, so the first match is the active session.
+                  const currentSessionId = seatedTableInfo
+                    ? pastEvents.find(e => e.eventId === seatedTableInfo.eventId)?.id
+                    : null;
+                  const visiblePastEvents = pastEvents.filter(e => e.id !== currentSessionId);
+                  return visiblePastEvents.length > 0 ? (
                   <div className="space-y-3">
-                    {pastEvents.filter(e => e.eventId !== seatedTableInfo?.eventId).map((event) => (
+                    {visiblePastEvents.map((event) => (
                       <div key={event.id} className="p-4 border-2 border-gray-200 rounded-xl bg-gray-50 opacity-75">
                         <div className="flex items-start justify-between mb-2">
                           <div>
@@ -1259,7 +1264,8 @@ export function AttendeeView({
                   </div>
                 ) : (
                   <div className="text-center py-8 text-gray-500"><p className="text-sm">No past events yet</p></div>
-                )}
+                );
+                })()}
               </div>
             </div>
           </div>

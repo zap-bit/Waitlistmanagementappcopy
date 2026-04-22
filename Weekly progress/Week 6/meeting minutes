@@ -1,0 +1,22 @@
+March 24, 2026 - Meeting Minutes - GIL Project
+
+Agenda
+- Database requirements for frontend and AI model sheet
+- Supabase tables shown
+- Brief overview of AI Model Implementation
+- Document to make sure AI stays on track
+- Go over Weekly Report
+
+Discussion Summary
+- Review of database requirements
+- Supabase walkthrough
+- Explained AI Model How's and Why's
+- Went over some TODOs
+  - Be ready to deploy online
+    - must be accesible
+    - have plan on how to make it an app
+  - Document that goes over system design
+    - Think about issues for 1000+ users
+    - What needs to be implemented
+  - Test out what happens when things like backend/APIs fail
+- Reviewed this week's Progress Report

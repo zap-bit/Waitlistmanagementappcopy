@@ -1,0 +1,25 @@
+March 31, 2026 - Meeting Minutes - GIL Project
+
+Agenda
+- Show deployed version of app
+- Go over some potential problems and fixes
+
+Discussion Summary
+- Look over using Railway for backend deployment
+- Reviewed this week's Progress Report
+- Go over how to deal with multiple requests being made
+- Small errors
+  - password character count
+  - waitlist creation party size creation
+    - max size says 8 on frontend, backend should reflect this
+  - waitlist time request error
+- Add to user UI
+  - See all the events they are part of
+  - See date for reservations
+- UI development
+  - text wrapping in frontend
+- Bugs to be fixed
+  - number of party mem
+  - password length
+  - special request display
+  - refresh to display events issue

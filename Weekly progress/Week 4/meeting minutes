@@ -1,0 +1,17 @@
+March 3, 2026 - Meeting Minutes - GIL Project
+
+Agenda
+- Jira and Figma access
+- Spec documentation completion
+- User and Business interface testing and debugging
+- Supabase setup complete
+- Login/Sign-up pages created
+
+Discussion Summary
+- Reviewed current user-flow and discussed possible features to implement:
+  - Consider hiding less relevant settings and leaving the most relevant ones visible and easily accessible to 
+    increase user experience
+  - Discussed adding a way to remember events and having pre-set staff preferences/settings
+- Reviewed Spec document, discussed reviewing to make sure it matches any changes
+- Supabase is set up, consider integrating Google OAuth
+- Discussed software to consider for future development: Google OAuth, MCP

@@ -1,0 +1,15 @@
+April 21, 2026 - Meeting Minutes - GIL Project
+
+Agenda
+- Go over revised scalability document
+- Go over bottlenecks
+- Contributions
+
+Discussion Summary
+- Bugs fixed
+- Final report document
+- Scalability document revision
+- Record demo in case of emergency
+- Offline mode (Local storage bottleneck)
+- Wait time prediction for table based events
+- K6

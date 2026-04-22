@@ -1,0 +1,17 @@
+March 10, 2026 - Meeting Minutes - GIL Project
+
+Agenda
+- Spec documentation completion
+- User and Business interface testing and debugging
+- Expanded queue functionality -> added new event type and archive feature
+- Supabase continued setup and beginning of integration with frontend
+- Profile pages created
+- Implentation of secure authentication
+
+Discussion Summary
+- Review of spec documentation
+- Reviewed current user-flow and discussed possible features to implement:
+  - SMS-based waitlist joining for users
+  - event calendar
+- Supabase walkthrough
+- Reviewed this week's Progress Report

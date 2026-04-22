@@ -1,0 +1,25 @@
+April 7, 2026 - Meeting Minutes - GIL Project
+
+Agenda
+- Show deployed version of app to show fixes made
+- Go over potential problems and fixes
+- Ask about final presentation
+- Go over weekly summary
+
+Discussion Summary
+- Scalability Document
+   - CICD pipeline
+   - Rate Limiting
+   - Overall System Design
+   - Stress Testing for Multiple Users
+   - Load Balancers
+      - Being sesnt to Free Server
+   - Horizontal Scaling
+
+- What is Product
+- How is it useful
+- K6 for load testing
+- toggle offline mode problems?
+- phone number check
+- member since invalid date
+- 0 member capacity 

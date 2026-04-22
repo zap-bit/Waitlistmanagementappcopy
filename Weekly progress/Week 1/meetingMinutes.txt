@@ -1,0 +1,15 @@
+Feb 10 Meeting Minutes
+Agenda
+Review project proposal
+
+Discussion Summary
+Walked through the current project proposal
+Explore the option to modularize the system so it can extend beyond the initial use case (e.g., theme parks and similar venues)
+Discussed a change in project phases to better reflect development flow
+Decided to convert the project timeline into a weekly breakdown for clearer tracking
+
+Action Items / To‑Do
+Define and document the API contract (frontend ↔ backend)
+Create Figma designs for core flows, keep simple clean UI
+Update the proposal to explicitly include AI tools being used and consider associated costs
+Set up GitHub repositories with frontend and backend separated

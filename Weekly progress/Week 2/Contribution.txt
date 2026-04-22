@@ -1,0 +1,86 @@
+Member 1: Disha Shetty
+(2hrs) 
+Designed and refined the system architecture for the Waitlist Management application
+  - Generated an initial architectural diagram using Gemini and iteratively refined it.
+  - Identified core system modules such as waitlist logic, capacity tracking, notifications, and future AI prediction components.
+
+(6hrs) 
+Researched API contract designs and industry standards and created the API specification
+  - Explored Swagger/OpenAPI standards for endpoint documentation.
+  - Defined endpoints, request/response schemas, validation rules, and error handling.
+
+(3hrs) 
+Explored AI tools and prompt engineering techniques to improve development workflow
+  - Tested tools like Claude, Gemini, and Codex (GitHub-synced).
+  - Built small prototype apps to understand AI-assisted development.
+  - Researched prompt engineering strategies to generate scalable architecture ideas, API designs, and modular code.
+
+(4hrs) 
+Built additional AI-assisted prototypes for learning and experimentation
+  - Created a simple AR fruit slash game called VisionBlade (Gemini).
+  - Developed a simple web interface with dual functionality of client vs customer (Claude, Figma prompt comparison).
+  - Launched a simple HTML, css based blog using Gemini to code and Pages to deploy, to understand GitHub functionality better (NeuroFrontiers).
+
+Additional Leader role
+Created Github repositories and added team members as collaborators, recorded meeting minutes, sceduled team meeting and documented weekly contributions from each member.
+
+Member 2: Kyle Adams Albuquerque
+(2hrs) 
+Brainstormed and evaluated multiple implementation approaches for the frontend, backend, AI model, and database design
+   - Defined core system modules, including waitlist logic, capacity management, notification handling, and predictive modeling components
+   - Explored different UI/UX layouts for both the Staff Dashboard and Attendee View, focusing on usability 
+(2hrs) 
+Refined and structured AI prompts to assist with building the frontend components, backend services, ML models, and database schemas
+   - Organized prompts into modular sections to streamline development of individual features
+   - Designed prompts to generate scalable, production-ready code rather than simple prototypes
+   - Left select architectural decisions open-ended to allow for further team discussion before finalizing implementation direction
+   - https://docs.google.com/document/d/1SUS1-YDp6nSb_8yiuCRRg6wh6xBYOecX1465c4YypH0/edit?usp=sharing
+(3hrs) 
+Worked on a personal project testing out API calls and utilizing AI tools to better understand how to use them effectively
+   - Mainly worked with Riot API and Claude
+
+Member 3: Neel Vavilapalli
+(30 minutes) 
+Updated the project proposal using AI tools
+  - Improved clarity, structure, and technical accuracy
+  - Refined objectives and feature descriptions
+(30 minutes) 
+Added and organized tasks in Jira
+  - Converted requirements into actionable tasks and user stories
+  - Set priorities and clarified task details
+(30 minutes) 
+Worked on the architecture diagram during the team meeting
+  - Captured design decisions and system components
+  - Updated frontend, backend, database, and AI integrations
+(1 hour) 
+Learned and explored Figma and its AI tools
+  - Created and modified UI layouts and components
+  - Tested AI-assisted wireframing and prototyping features
+(1 hour) 
+Reviewed project specifications and the completed architecture diagram
+  - Studied system requirements and data flow
+  - Confirmed alignment with project goals
+(1 hour) 
+Researched best practices for scalable software design
+  - Reviewed common architecture patterns
+  - Evaluated relevance to the current project
+(1 hour) 
+Researched strategies for integrating AI into the project
+  - Examined AI interactions with frontend and backend
+  - Considered deployment and monitoring factors
+(30 minutes) 
+Researched prompt engineering techniques
+  - Improved prompt structure for higher-quality AI outputs
+  - Analyzed impact on code accuracy and usability
+Member 4: Angela Lopez
+(1.5 hours) Configured the project workspace using Figma Make to streamline the collaborative design process for the team
+(2.5 hours) Developed high-fidelity UI components for the staff-facing dashboard, focusing on table-based room setups.
+(2 hours) Designed the mobile-responsive interface for attendees to view waitlist status and manage their personal reservations.
+(1 hour) Rewrote the overarching project phases into one-week sprints to improve the distribution of tasks and ensure a steady development flow.
+(3 hours) Performed testing in Figma to simulate the logic flow for adding and removing users from the waitlist system.
+(2.5 hours) Created a digital floor plan format to visualize how waitlisted attendees are assigned to specific tables within a room.
+(2 hours) Performed user-flow testing to ensure the system correctly differentiates between users with confirmed reservations and those on the standby waitlist.
+(30 min) Defined specific deliverables for the upcoming week’s sprint to align with the revised project schedule.
+
+Important Links:
+Figma demo https://www.figma.com/make/eNVkOFDVcPecCHbg1ML89q/Waitlist-Management-App?t=InNTnlUYznH39pkA-20&fullscreen=1 

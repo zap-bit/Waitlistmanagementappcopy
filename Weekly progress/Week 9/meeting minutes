@@ -1,0 +1,19 @@
+April 14, 2026 - Meeting Minutes - GIL Project
+
+Agenda
+- Show deployed version of app to show fixes made (UI, Sync issues, bug fixes)
+- Go over potential problems and fixes (Two users logged into same offline account, local storage, qr codes, 6 digit codes, scaling)
+- Go over scalability doc
+- Go over weekly summary
+
+Discussion Summary
+- Two users logged into same offline account 
+- Use of local storage 
+- QR codes
+- 6 digit codes
+- Scaling
+- Load balancing
+- Testing
+- Setting table event to max capacity and then removing table in staff dashboard results in issue
+- Focuses for next week
+

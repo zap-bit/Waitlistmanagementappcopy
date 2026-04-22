@@ -1,0 +1,15 @@
+Feb 17 Meeting Minutes
+ 
+Agenda
+Review architecture diagram, API contract, and Figma demo
+ 
+Discussion Summary
+Went through the architecture diagram and confirmed the overall structure (frontend, backend, database).
+Reviewed the API contract
+Did a quick Figma walkthrough and noted a few future improvements.
+ 
+Action Items / To-Do
+Refine Figma and API spec
+Set up frontend and backend boilerplate
+Make first API call (test with Supabase/backend)
+Upload all progress to GitHub under Weekly Progress → Week1, Week2… including proposal, MOM, links, and report.
