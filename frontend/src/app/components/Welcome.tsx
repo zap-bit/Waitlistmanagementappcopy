@@ -1,4 +1,4 @@
-import { ClipboardList, LogIn, UserPlus } from 'lucide-react';
+import { LogIn, UserPlus } from 'lucide-react';
 
 interface WelcomeProps {
   onNavigateToLogin: () => void;
@@ -10,11 +10,13 @@ export function Welcome({ onNavigateToLogin, onNavigateToSignup }: WelcomeProps)
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md space-y-8">
         <div className="text-center">
-          <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-            <ClipboardList className="w-10 h-10 text-white" />
-          </div>
+          <img
+            src="/gil.png"
+            alt="Get-In-Line logo"
+            className="w-72 h-56 object-contain object-bottom mx-auto drop-shadow-lg"
+          />
           <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Waitlist Manager
+            Get-In-Line
           </h1>
           <p className="text-gray-600 text-lg">
             Streamline your queue management

@@ -521,13 +521,12 @@ export function AttendeeView({
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 flex flex-col max-w-md mx-auto">
       <StatusBar isOnline={isOnline} isSyncing={isSyncing} />
 
-      <div className="bg-white shadow-sm p-4 flex items-center justify-between">
+      <div className="bg-white shadow-sm py-1 px-4 flex items-center justify-between">
         <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
           {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
-        <div className="flex-1 text-center">
-          <h1 className="text-xl font-semibold">Waitlist</h1>
-          <p className="text-xs text-gray-500">Guest View</p>
+        <div className="flex-1 flex justify-center">
+          <img src="/gil.png" alt="Get-In-Line" className="h-20 object-contain" />
         </div>
         <div className="flex items-center gap-2">
           <button onClick={onLogout} className="p-2 hover:bg-gray-100 rounded-lg transition-colors" title="Logout">

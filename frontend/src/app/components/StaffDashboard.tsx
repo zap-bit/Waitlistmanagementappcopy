@@ -1145,55 +1145,40 @@ export function StaffDashboard({
     <div className="min-h-screen bg-gray-100 flex flex-col max-w-md mx-auto">
       <StatusBar isOnline={isOnline} isSyncing={isSyncing} />
 
-      <div className="bg-black text-white p-4 flex items-center justify-between">
+      <div className="bg-white shadow-sm py-1 px-4 flex items-center justify-between">
         <button
           onClick={() =>
             currentPage === "archived"
               ? setCurrentPage("home")
               : setMenuOpen(!menuOpen)
           }
-          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
         >
           {currentPage === "archived" ? (
-            <ArrowLeft className="w-6 h-6" />
+            <ArrowLeft className="w-6 h-6 text-gray-700" />
           ) : menuOpen ? (
-            <X className="w-6 h-6" />
+            <X className="w-6 h-6 text-gray-700" />
           ) : (
-            <Menu className="w-6 h-6" />
+            <Menu className="w-6 h-6 text-gray-700" />
           )}
         </button>
-        <div className="flex-1 text-center">
-          <h1 className="text-2xl font-bold">
-            Staff Dashboard
-          </h1>
-          <p className="text-sm text-gray-400">
-            {currentPage === "home"
-              ? "Your Events"
-              : currentPage === "archived"
-                ? "Archived Events"
-                : currentPage === "waitlist"
-                  ? waitlistSubPage === "settings"
-                    ? "Table Settings"
-                    : selectedEvent?.name ||
-                    "Waitlist Management"
-                  : selectedEvent?.name ||
-                  "Capacity Management"}
-          </p>
+        <div className="flex-1 flex justify-center">
+          <img src="/gil.png" alt="Get-In-Line" className="h-20 object-contain" />
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowProfile(true)}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
             title="Profile"
           >
-            <UserIcon className="w-6 h-6" />
+            <UserIcon className="w-6 h-6 text-gray-700" />
           </button>
           <button
             onClick={onLogout}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
             title="Logout"
           >
-            <LogOut className="w-6 h-6" />
+            <LogOut className="w-6 h-6 text-gray-700" />
           </button>
         </div>
       </div>
