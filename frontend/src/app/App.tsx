@@ -4,6 +4,7 @@ import { AttendeeView } from './components/AttendeeView';
 import { Welcome } from './components/Welcome';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
+import { SplashScreen } from './components/SplashScreen';
 import { Users, ClipboardList } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { Table } from './components/TableGrid';
@@ -101,6 +102,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role>(null);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [showingSplash, setShowingSplash] = useState(false);
+  const [splashVideoEnded, setSplashVideoEnded] = useState(false);
+  const [splashDataReady, setSplashDataReady] = useState(false);
 
   // Stable ref so the online handler can call setWaitlist without being in its dep array
   const setWaitlistRef = useRef(setWaitlist);
@@ -111,12 +115,18 @@ export default function App() {
     if (storedUser) {
       setUser(storedUser);
       setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
-      // Refresh from Supabase so archived/new events are up-to-date on page reload
-      loadEventsFromSupabase().catch(() => { });
+      loadEventsFromSupabase().catch(() => {});
     } else {
       setAuthScreen('welcome');
     }
   }, []);
+
+  // Dismiss splash when both video and data are ready
+  useEffect(() => {
+    if (showingSplash && splashVideoEnded && splashDataReady) {
+      setShowingSplash(false);
+    }
+  }, [showingSplash, splashVideoEnded, splashDataReady]);
 
   // Online/offline detection + sync flush
   useEffect(() => {
@@ -228,6 +238,12 @@ export default function App() {
     return () => clearInterval(interval);
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const startSplash = () => {
+    setShowingSplash(true);
+    setSplashVideoEnded(false);
+    setSplashDataReady(false);
+  };
+
   const handleLogin = async (email: string, password: string) => {
     localStorage.removeItem("events");
     localStorage.removeItem("waitlist");
@@ -242,12 +258,9 @@ export default function App() {
       setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
       setAuthScreen(null);
       toast.success(`Welcome back, ${loggedInUser.name}!`);
-      setEventsLoading(true);
-      await Promise.all([
-        loadEventsFromSupabase(),
-        loadWaitlistFromSupabase(),
-      ]);
-      setEventsLoading(false);
+      startSplash();
+      Promise.all([loadEventsFromSupabase(), loadWaitlistFromSupabase()])
+        .finally(() => setSplashDataReady(true));
     } else {
       toast.error('Invalid email or password');
     }
@@ -260,12 +273,9 @@ export default function App() {
       setSelectedRole('attendee');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}!`);
-      setEventsLoading(true);
-      await Promise.all([
-        loadEventsFromSupabase(),
-        loadWaitlistFromSupabase(),
-      ]);
-      setEventsLoading(false);
+      startSplash();
+      Promise.all([loadEventsFromSupabase(), loadWaitlistFromSupabase()])
+        .finally(() => setSplashDataReady(true));
     } else {
       toast.error('Email already exists');
     }
@@ -278,9 +288,8 @@ export default function App() {
       setSelectedRole('staff');
       setAuthScreen(null);
       toast.success(`Welcome, ${newUser.name}! Your business "${businessName}" has been created.`);
-      setEventsLoading(true);
-      await loadEventsFromSupabase();
-      setEventsLoading(false);
+      startSplash();
+      loadEventsFromSupabase().finally(() => setSplashDataReady(true));
     } else {
       toast.error('Email already exists');
     }
@@ -440,6 +449,10 @@ export default function App() {
       }
     }
   };
+
+  if (showingSplash) {
+    return <SplashScreen onVideoEnd={() => setSplashVideoEnded(true)} />;
+  }
 
   // Show auth screens if not logged in
   if (!user) {
