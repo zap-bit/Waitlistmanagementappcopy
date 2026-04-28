@@ -115,7 +115,7 @@ export default function App() {
     if (storedUser) {
       setUser(storedUser);
       setSelectedRole(storedUser.role === 'staff' ? 'staff' : 'attendee');
-      loadEventsFromSupabase().catch(() => {});
+      loadEventsFromSupabase().catch(() => { });
     } else {
       setAuthScreen('welcome');
     }
