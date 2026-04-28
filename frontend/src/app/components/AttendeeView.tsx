@@ -149,7 +149,9 @@ export function AttendeeView({
             reservationDuration: (e.reservation_duration as number) || 90,
             noShowPolicy: (e.no_show_policy as string) || "Hold table for 15 minutes", // MAP NO-SHOW POLICY
           }));
-          serverEvents = mapped.filter((e: { archived: boolean }) => !e.archived);
+          serverEvents = mapped.filter((e: any) =>
+            !e.archived && e.type !== "simple-capacity"
+          );
           loadEvents();
         }).catch(e => console.error('Failed to load events:', e));
     }
