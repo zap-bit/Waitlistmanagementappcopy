@@ -101,6 +101,9 @@ export function AttendeeView({
   useEffect(() => {
     let serverEvents: Event[] = [];
     const loadEvents = () => {
+      // If we are currently syncing an update, 
+      // don't let the background poll overwrite our local state.
+      if (isSyncing) return;
       const localEvents = getStoredEvents().filter(e => e.status === "active" && e.type !== "simple-capacity");
       const localIds = new Set(localEvents.map(e => e.id));
       const merged = [...localEvents, ...serverEvents.filter(e => !localIds.has(e.id))];
@@ -146,7 +149,9 @@ export function AttendeeView({
             reservationDuration: (e.reservation_duration as number) || 90,
             noShowPolicy: (e.no_show_policy as string) || "Hold table for 15 minutes", // MAP NO-SHOW POLICY
           }));
-          serverEvents = mapped.filter((e: { archived: boolean }) => !e.archived);
+          serverEvents = mapped.filter((e: any) =>
+            !e.archived && e.type !== "simple-capacity"
+          );
           loadEvents();
         }).catch(e => console.error('Failed to load events:', e));
     }
@@ -288,6 +293,36 @@ export function AttendeeView({
     }, 30000);
     return () => clearInterval(interval);
   }, [myEntry?.eventId]);
+
+  const getQueueStats = () => {
+    if (!selectedEvent) return { current: 0, max: 0 };
+
+    let current = 0;
+    let max = 0;
+
+    if (selectedEvent.type === "capacity-based") {
+      const capacityEvent = selectedEvent as CapacityBasedEvent;
+      if (capacityEvent.queueMode === "single") {
+        max = capacityEvent.capacity || 0;
+        current = allWaitlistEntries
+          .filter((e) => e.eventId === selectedEvent.id)
+          .reduce((sum, e) => sum + e.partySize, 0) + (capacityEvent.manualOffset || 0);
+      } else if (selectedQueue) {
+        max = selectedQueue.capacity;
+        current = allWaitlistEntries
+          .filter((e) => e.eventId === selectedEvent.id && e.queueId === selectedQueue.id)
+          .reduce((sum, e) => sum + e.partySize, 0) + (selectedQueue.manualOffset || 0);
+      }
+    } else if (selectedEvent.type === "table-based") {
+      // For table events, show filled tables vs total tables
+      max = selectedEvent.numberOfTables || 0;
+      current = tables.filter(t => t.occupied).length;
+    }
+
+    return { current, max };
+  };
+
+  const stats = getQueueStats();
 
   const allTablesOccupied = tables.every((table) => table.occupied);
 
@@ -809,6 +844,12 @@ export function AttendeeView({
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Party Size *</label>
+                    {selectedEvent && (
+                      <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded-full text-gray-600">
+                        ({stats.current}/{stats.max} {selectedEvent.type === 'table-based' ? 'tables' : 'spots'})
+                      </span>
+                    )}
+
                     <input type="number" min="1" max={selectedEvent.type === "capacity-based" && joinType === "waitlist" ? (() => {
                       const capacityEvent = selectedEvent as CapacityBasedEvent;
                       let queueCapacity = 0; let currentQueueSize = 0;
@@ -998,278 +1039,283 @@ export function AttendeeView({
             <button onClick={() => setIsOnline(!isOnline)} className="w-full text-xs text-gray-500 py-2">Toggle {isOnline ? "Offline" : "Online"} Mode</button>
           </div>
         </div>
-      )}
+      )
+      }
 
-      {showAddAnotherForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-gray-800">
-                {isTableBasedReservation ? "Edit Reservation" : "Add Another Guest"}
-              </h2>
-              <button
-                onClick={() => setShowAddAnotherForm(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
-                <input
-                  type="text"
-                  value={guestName}
-                  onChange={(e) => setGuestName(e.target.value)}
-                  placeholder="Guest name"
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+      {
+        showAddAnotherForm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-gray-800">
+                  {isTableBasedReservation ? "Edit Reservation" : "Add Another Guest"}
+                </h2>
+                <button
+                  onClick={() => setShowAddAnotherForm(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Party Size *</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={partySize}
-                  onChange={(e) => setPartySize(Number(e.target.value))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                  <input
+                    type="text"
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    placeholder="Guest name"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
 
-              {isTableBasedReservation && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Date *</label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                      <input
-                        type="date"
-                        value={reservationDate}
-                        onChange={(e) => setReservationDate(e.target.value)}
-                        className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Party Size *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={partySize}
+                    onChange={(e) => setPartySize(Number(e.target.value))}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {isTableBasedReservation && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Date *</label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <input
+                          type="date"
+                          value={reservationDate}
+                          onChange={(e) => setReservationDate(e.target.value)}
+                          className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Time *</label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                      <input
-                        type="time"
-                        value={reservationTime}
-                        onChange={(e) => setReservationTime(e.target.value)}
-                        className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Reservation Time *</label>
+                      <div className="relative">
+                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <input
+                          type="time"
+                          value={reservationTime}
+                          onChange={(e) => setReservationTime(e.target.value)}
+                          className="w-full pl-10 pr-4 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Special Requests</label>
-                <textarea
-                  value={specialRequests}
-                  onChange={(e) => setSpecialRequests(e.target.value)}
-                  rows={3}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                />
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Special Requests</label>
+                  <textarea
+                    value={specialRequests}
+                    onChange={(e) => setSpecialRequests(e.target.value)}
+                    rows={3}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  />
+                </div>
+
+                <button
+                  onClick={handleAddAnother}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 px-6 rounded-xl font-semibold active:scale-95 transition-transform mt-2"
+                >
+                  {isTableBasedReservation ? "Save Changes" : "Confirm"}
+                </button>
               </div>
-
-              <button
-                onClick={handleAddAnother}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 px-6 rounded-xl font-semibold active:scale-95 transition-transform mt-2"
-              >
-                {isTableBasedReservation ? "Save Changes" : "Confirm"}
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {showProfile && <Profile user={user} onClose={() => setShowProfile(false)} onLogout={onLogout} />}
 
-      {showMyEvents && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-2xl">
-              <h2 className="text-2xl font-bold text-gray-800">My Events</h2>
-              <button onClick={() => setShowMyEvents(false)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-6 h-6" /></button>
-            </div>
+      {
+        showMyEvents && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50">
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-2xl">
+                <h2 className="text-2xl font-bold text-gray-800">My Events</h2>
+                <button onClick={() => setShowMyEvents(false)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-6 h-6" /></button>
+              </div>
 
-            <div className="p-6 space-y-4">
-              {myWaitlistIds.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4"><Ticket className="w-10 h-10 text-gray-400" /></div>
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">No Active Events</h3>
-                  <p className="text-sm text-gray-600 mb-4">You're not currently on any waitlists</p>
-                  <button onClick={() => { setShowMyEvents(false); setJoinType("event-selection"); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">Join an Event</button>
-                </div>
-              ) : (
-                <>
-                  <p className="text-sm text-gray-600 mb-4">You're currently on {myWaitlistIds.length} {myWaitlistIds.length === 1 ? "waitlist" : "waitlists"}</p>
-                  {myWaitlistIds.map((id) => {
-                    const entry = allWaitlistEntries.find((e) => e.id === id);
-                    if (!entry) return null;
-
-                    const event = availableEvents.find((e) => e.id === entry.eventId);
-                    const eventName = event?.name || "Unknown Event";
-
-                    const queueName = entry.queueId ? (() => {
-                      if (event && event.type === "capacity-based") {
-                        const capacityEvent = event as CapacityBasedEvent;
-                        const queue = capacityEvent.queues?.find((q) => q.id === entry.queueId);
-                        return queue?.name;
-                      }
-                      return undefined;
-                    })() : undefined;
-
-                    const fullDisplayName = queueName ? `${queueName} - ${eventName}` : eventName;
-                    const sameTypeEntries = allWaitlistEntries.filter((e) => e.type === entry.type && e.eventId === entry.eventId);
-                    const pos = sameTypeEntries.findIndex((e) => e.id === id) + 1;
-                    const dynamicWaitTime = calculateDynamicWaitTime(entry, allWaitlistEntries);
-
-                    let capacityBadge: { text: string; color: string; } | null = null;
-                    if (event && event.type === "capacity-based") {
-                      const capacityEvent = event as CapacityBasedEvent;
-                      let queueCapacity = 0; let currentQueueSize = 0;
-
-                      if (capacityEvent.queueMode === "single") {
-                        queueCapacity = capacityEvent.capacity || 0;
-                        currentQueueSize = allWaitlistEntries.filter((e) => e.eventId === event.id).reduce((sum, e) => sum + e.partySize, 0);
-                        currentQueueSize += (capacityEvent.manualOffset || 0);
-                      } else {
-                        const queue = capacityEvent.queues?.find((q) => q.id === entry.queueId);
-                        if (queue) {
-                          queueCapacity = queue.capacity;
-                          currentQueueSize = allWaitlistEntries.filter((e) => e.eventId === event.id && e.queueId === entry.queueId).reduce((sum, e) => sum + e.partySize, 0);
-                          currentQueueSize += (queue.manualOffset || 0);
-                        }
-                      }
-                      const spotsLeft = queueCapacity - currentQueueSize;
-                      const percentFilled = queueCapacity > 0 ? (currentQueueSize / queueCapacity) * 100 : 0;
-
-                      if (spotsLeft <= 10 && spotsLeft > 0) capacityBadge = { text: `${spotsLeft} spots left`, color: "bg-red-100 text-red-700" };
-                      else if (percentFilled >= 80) capacityBadge = { text: "Almost Full", color: "bg-red-100 text-red-700" };
-                      else if (percentFilled >= 50) capacityBadge = { text: "Filling Up", color: "bg-amber-100 text-amber-700" };
-                    }
-
-                    return (
-                      <button key={id} onClick={() => { setSelectedWaitlistId(id); setViewingStatus(true); setShowMyEvents(false); }} className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all text-left">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h3 className="font-semibold text-lg text-gray-800">{fullDisplayName}</h3>
-                            <p className="text-sm text-gray-600">{entry.name}</p>
-                          </div>
-                          <div className="flex flex-col gap-1 items-end">
-                            {entry.type === "reservation" ? <div className="bg-green-100 text-green-700 text-xs font-semibold px-2 py-1 rounded">Reservation</div> : <div className="bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-1 rounded">{event?.type === "capacity-based" ? "Queue" : "Waitlist"}</div>}
-                            {capacityBadge && <div className={`${capacityBadge.color} text-xs font-semibold px-2 py-1 rounded whitespace-nowrap`}>{capacityBadge.text}</div>}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-4 text-sm text-gray-600">
-                          {entry.type === "waitlist" && <div className="flex items-center gap-1"><ListOrdered className="w-4 h-4" /><span>Position #{pos}</span></div>}
-                          {entry.type === "reservation" && entry.reservationTime && (
-                            <div className="flex items-center gap-1">
-                              <Clock className="w-4 h-4 text-green-600" />
-                              <span className="font-semibold text-green-700">
-                                {entry.reservationTime.toLocaleDateString([], { month: "short", day: "numeric" })} at {entry.reservationTime.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                              </span>
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{entry.partySize} {entry.partySize === 1 ? "person" : "people"}</span></div>
-                          {entry.type === "waitlist" && dynamicWaitTime > 0 && <div className="flex items-center gap-1"><Clock className="w-4 h-4" /><span>~{dynamicWaitTime} min</span></div>}
-                        </div>
-                        {entry.specialRequests && <div className="mt-2 pt-2 border-t border-gray-200"><p className="text-xs text-gray-500 break-words">Note: {entry.specialRequests}</p></div>}
-                      </button>
-                    );
-                  })}
-                  <div className="pt-4 border-t border-gray-200">
-                    <button onClick={() => { setShowMyEvents(false); setJoinType("event-selection"); }} className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white py-3 px-6 rounded-xl font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform">
-                      <Ticket className="w-5 h-5" /> Join Another Event
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {/* RESTORED: Currently Seated Section */}
-              {seatedTableInfo && (
-                <div className="pt-6 mt-6 border-t-2 border-green-200">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                    <Users className="w-5 h-5 text-green-600" />
-                    Currently Seated
-                  </h3>
-                  <div className="p-4 border-2 border-green-400 rounded-xl bg-green-50 animate-pulse-slow">
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <h4 className="font-bold text-green-900 text-lg">
-                          {seatedTableInfo.tableName}
-                        </h4>
-                        <p className="text-sm text-green-700">
-                          {seatedTableInfo.eventName}
-                        </p>
-                      </div>
-                      <div className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
-                        Seated ✓
-                      </div>
-                    </div>
-                    <p className="text-xs text-green-600 mt-2">
-                      Seated at{" "}
-                      {seatedTableInfo.seatedAt.toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                      {" · "}This card will move to Past Events when your table is cleared.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Past Events Section */}
-              <div className="pt-6 mt-6 border-t-2 border-gray-300">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-gray-500" />
-                  Past Events
-                </h3>
-                {(() => {
-                  // Hide only the single most-recent history entry for the currently seated event.
-                  // Backend returns entries sorted newest-first, so the first match is the active session.
-                  const currentSessionId = seatedTableInfo
-                    ? pastEvents.find(e => e.eventId === seatedTableInfo.eventId)?.id
-                    : null;
-                  const visiblePastEvents = pastEvents.filter(e => e.id !== currentSessionId);
-                  return visiblePastEvents.length > 0 ? (
-                  <div className="space-y-3">
-                    {visiblePastEvents.map((event) => (
-                      <div key={event.id} className="p-4 border-2 border-gray-200 rounded-xl bg-gray-50 opacity-75">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h4 className="font-semibold text-gray-800">{event.eventName}</h4>
-                            <p className="text-sm text-gray-600">{event.name}</p>
-                          </div>
-                          <div className="bg-gray-300 text-gray-700 text-xs font-semibold px-2 py-1 rounded">Seated</div>
-                        </div>
-
-                        <div className="flex items-center gap-4 text-sm text-gray-600">
-                          <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{event.partySize} {event.partySize === 1 ? "person" : "people"}</span></div>
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-4 h-4" />
-                            <span>{event.seatedAt.toLocaleDateString([], { month: "short", day: "numeric" })} at {event.seatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+              <div className="p-6 space-y-4">
+                {myWaitlistIds.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4"><Ticket className="w-10 h-10 text-gray-400" /></div>
+                    <h3 className="text-lg font-semibold text-gray-800 mb-2">No Active Events</h3>
+                    <p className="text-sm text-gray-600 mb-4">You're not currently on any waitlists</p>
+                    <button onClick={() => { setShowMyEvents(false); setJoinType("event-selection"); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">Join an Event</button>
                   </div>
                 ) : (
-                  <div className="text-center py-8 text-gray-500"><p className="text-sm">No past events yet</p></div>
-                );
-                })()}
+                  <>
+                    <p className="text-sm text-gray-600 mb-4">You're currently on {myWaitlistIds.length} {myWaitlistIds.length === 1 ? "waitlist" : "waitlists"}</p>
+                    {myWaitlistIds.map((id) => {
+                      const entry = allWaitlistEntries.find((e) => e.id === id);
+                      if (!entry) return null;
+
+                      const event = availableEvents.find((e) => e.id === entry.eventId);
+                      const eventName = event?.name || "Unknown Event";
+
+                      const queueName = entry.queueId ? (() => {
+                        if (event && event.type === "capacity-based") {
+                          const capacityEvent = event as CapacityBasedEvent;
+                          const queue = capacityEvent.queues?.find((q) => q.id === entry.queueId);
+                          return queue?.name;
+                        }
+                        return undefined;
+                      })() : undefined;
+
+                      const fullDisplayName = queueName ? `${queueName} - ${eventName}` : eventName;
+                      const sameTypeEntries = allWaitlistEntries.filter((e) => e.type === entry.type && e.eventId === entry.eventId);
+                      const pos = sameTypeEntries.findIndex((e) => e.id === id) + 1;
+                      const dynamicWaitTime = calculateDynamicWaitTime(entry, allWaitlistEntries);
+
+                      let capacityBadge: { text: string; color: string; } | null = null;
+                      if (event && event.type === "capacity-based") {
+                        const capacityEvent = event as CapacityBasedEvent;
+                        let queueCapacity = 0; let currentQueueSize = 0;
+
+                        if (capacityEvent.queueMode === "single") {
+                          queueCapacity = capacityEvent.capacity || 0;
+                          currentQueueSize = allWaitlistEntries.filter((e) => e.eventId === event.id).reduce((sum, e) => sum + e.partySize, 0);
+                          currentQueueSize += (capacityEvent.manualOffset || 0);
+                        } else {
+                          const queue = capacityEvent.queues?.find((q) => q.id === entry.queueId);
+                          if (queue) {
+                            queueCapacity = queue.capacity;
+                            currentQueueSize = allWaitlistEntries.filter((e) => e.eventId === event.id && e.queueId === entry.queueId).reduce((sum, e) => sum + e.partySize, 0);
+                            currentQueueSize += (queue.manualOffset || 0);
+                          }
+                        }
+                        const spotsLeft = queueCapacity - currentQueueSize;
+                        const percentFilled = queueCapacity > 0 ? (currentQueueSize / queueCapacity) * 100 : 0;
+
+                        if (spotsLeft <= 10 && spotsLeft > 0) capacityBadge = { text: `${spotsLeft} spots left`, color: "bg-red-100 text-red-700" };
+                        else if (percentFilled >= 80) capacityBadge = { text: "Almost Full", color: "bg-red-100 text-red-700" };
+                        else if (percentFilled >= 50) capacityBadge = { text: "Filling Up", color: "bg-amber-100 text-amber-700" };
+                      }
+
+                      return (
+                        <button key={id} onClick={() => { setSelectedWaitlistId(id); setViewingStatus(true); setShowMyEvents(false); }} className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all text-left">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <h3 className="font-semibold text-lg text-gray-800">{fullDisplayName}</h3>
+                              <p className="text-sm text-gray-600">{entry.name}</p>
+                            </div>
+                            <div className="flex flex-col gap-1 items-end">
+                              {entry.type === "reservation" ? <div className="bg-green-100 text-green-700 text-xs font-semibold px-2 py-1 rounded">Reservation</div> : <div className="bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-1 rounded">{event?.type === "capacity-based" ? "Queue" : "Waitlist"}</div>}
+                              {capacityBadge && <div className={`${capacityBadge.color} text-xs font-semibold px-2 py-1 rounded whitespace-nowrap`}>{capacityBadge.text}</div>}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4 text-sm text-gray-600">
+                            {entry.type === "waitlist" && <div className="flex items-center gap-1"><ListOrdered className="w-4 h-4" /><span>Position #{pos}</span></div>}
+                            {entry.type === "reservation" && entry.reservationTime && (
+                              <div className="flex items-center gap-1">
+                                <Clock className="w-4 h-4 text-green-600" />
+                                <span className="font-semibold text-green-700">
+                                  {entry.reservationTime.toLocaleDateString([], { month: "short", day: "numeric" })} at {entry.reservationTime.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{entry.partySize} {entry.partySize === 1 ? "person" : "people"}</span></div>
+                            {entry.type === "waitlist" && dynamicWaitTime > 0 && <div className="flex items-center gap-1"><Clock className="w-4 h-4" /><span>~{dynamicWaitTime} min</span></div>}
+                          </div>
+                          {entry.specialRequests && <div className="mt-2 pt-2 border-t border-gray-200"><p className="text-xs text-gray-500 break-words">Note: {entry.specialRequests}</p></div>}
+                        </button>
+                      );
+                    })}
+                    <div className="pt-4 border-t border-gray-200">
+                      <button onClick={() => { setShowMyEvents(false); setJoinType("event-selection"); }} className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white py-3 px-6 rounded-xl font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                        <Ticket className="w-5 h-5" /> Join Another Event
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {/* RESTORED: Currently Seated Section */}
+                {seatedTableInfo && (
+                  <div className="pt-6 mt-6 border-t-2 border-green-200">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-green-600" />
+                      Currently Seated
+                    </h3>
+                    <div className="p-4 border-2 border-green-400 rounded-xl bg-green-50 animate-pulse-slow">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <h4 className="font-bold text-green-900 text-lg">
+                            {seatedTableInfo.tableName}
+                          </h4>
+                          <p className="text-sm text-green-700">
+                            {seatedTableInfo.eventName}
+                          </p>
+                        </div>
+                        <div className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
+                          Seated ✓
+                        </div>
+                      </div>
+                      <p className="text-xs text-green-600 mt-2">
+                        Seated at{" "}
+                        {seatedTableInfo.seatedAt.toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                        {" · "}This card will move to Past Events when your table is cleared.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Past Events Section */}
+                <div className="pt-6 mt-6 border-t-2 border-gray-300">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-gray-500" />
+                    Past Events
+                  </h3>
+                  {(() => {
+                    // Hide only the single most-recent history entry for the currently seated event.
+                    // Backend returns entries sorted newest-first, so the first match is the active session.
+                    const currentSessionId = seatedTableInfo
+                      ? pastEvents.find(e => e.eventId === seatedTableInfo.eventId)?.id
+                      : null;
+                    const visiblePastEvents = pastEvents.filter(e => e.id !== currentSessionId);
+                    return visiblePastEvents.length > 0 ? (
+                      <div className="space-y-3">
+                        {visiblePastEvents.map((event) => (
+                          <div key={event.id} className="p-4 border-2 border-gray-200 rounded-xl bg-gray-50 opacity-75">
+                            <div className="flex items-start justify-between mb-2">
+                              <div>
+                                <h4 className="font-semibold text-gray-800">{event.eventName}</h4>
+                                <p className="text-sm text-gray-600">{event.name}</p>
+                              </div>
+                              <div className="bg-gray-300 text-gray-700 text-xs font-semibold px-2 py-1 rounded">Seated</div>
+                            </div>
+
+                            <div className="flex items-center gap-4 text-sm text-gray-600">
+                              <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{event.partySize} {event.partySize === 1 ? "person" : "people"}</span></div>
+                              <div className="flex items-center gap-1">
+                                <Calendar className="w-4 h-4" />
+                                <span>{event.seatedAt.toLocaleDateString([], { month: "short", day: "numeric" })} at {event.seatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500"><p className="text-sm">No past events yet</p></div>
+                    );
+                  })()}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }

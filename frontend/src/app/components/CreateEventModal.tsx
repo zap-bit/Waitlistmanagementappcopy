@@ -25,7 +25,7 @@ import { toast } from "sonner";
 interface CreateEventModalProps {
   businessId: string;
   onClose: () => void;
-  onCreateEvent: (event: Event) => void;
+  onCreateEvent: (event: Event) => boolean | void;
   editEvent?: Event | null; // Optional event to edit
 }
 
@@ -178,6 +178,7 @@ export function CreateEventModal({
       newEvent = {
         ...baseEvent,
         type: "simple-capacity",
+        isPublic: false,
         capacity: parseInt(capacity) || 100,
         estimatedWaitPerPerson:
           parseInt(estimatedWaitPerPerson) || 5,
@@ -205,7 +206,13 @@ export function CreateEventModal({
       } as TableBasedEvent;
     }
 
-    onCreateEvent(newEvent);
+    //onCreateEvent(newEvent);
+    // Capture the result of the creation/update logic from the parent
+    const isUpdateValid = onCreateEvent(newEvent);
+
+    // IF the parent returned false, it means validation failed.
+    // Stop here so the modal stays open and no success toast triggers.
+    if (isUpdateValid === false) return;
     if (editEvent) {
       posthog?.capture('event_updated', {
         event_id: newEvent.id,
@@ -383,44 +390,45 @@ export function CreateEventModal({
               </div>
 
               {/* Public/Private Toggle */}
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Event Visibility
-                    </label>
-                    <p className="text-xs text-gray-600 break-words">
-                      {isPublic
-                        ? "Anyone can view and join this event"
-                        : "Only people with the direct link can access this event"}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsPublic(!isPublic)}
-                    className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${isPublic ? "bg-blue-600" : "bg-gray-300"
-                      }`}
-                  >
-                    <span
-                      className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${isPublic
+              {eventType !== "simple-capacity" && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Event Visibility
+                      </label>
+                      <p className="text-xs text-gray-600 break-words">
+                        {isPublic
+                          ? "Anyone can view and join this event"
+                          : "Only people with the direct link can access this event"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsPublic(!isPublic)}
+                      className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${isPublic ? "bg-blue-600" : "bg-gray-300"
+                        }`}
+                    >
+                      <span
+                        className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${isPublic
                           ? "translate-x-7"
                           : "translate-x-1"
+                          }`}
+                      />
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span
+                      className={`text-xs font-medium break-words ${isPublic ? "text-blue-600" : "text-gray-500"
                         }`}
-                    />
-                  </button>
+                    >
+                      {isPublic
+                        ? "🌐 Public Event"
+                        : "🔒 Private Event"}
+                    </span>
+                  </div>
                 </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span
-                    className={`text-xs font-medium break-words ${isPublic ? "text-blue-600" : "text-gray-500"
-                      }`}
-                  >
-                    {isPublic
-                      ? "🌐 Public Event"
-                      : "🔒 Private Event"}
-                  </span>
-                </div>
-              </div>
-
+              )}
               {/* Capacity-Based Event Fields */}
               {eventType === "capacity-based" && (
                 <>
@@ -434,8 +442,8 @@ export function CreateEventModal({
                         type="button"
                         onClick={() => setQueueMode("single")}
                         className={`flex-1 py-3 px-4 rounded-lg font-medium transition-all ${queueMode === "single"
-                            ? "bg-blue-600 text-white shadow-md"
-                            : "bg-white text-gray-700 hover:bg-gray-100"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-white text-gray-700 hover:bg-gray-100"
                           }`}
                       >
                         Single Queue
@@ -444,8 +452,8 @@ export function CreateEventModal({
                         type="button"
                         onClick={() => setQueueMode("multiple")}
                         className={`flex-1 py-3 px-4 rounded-lg font-medium transition-all ${queueMode === "multiple"
-                            ? "bg-blue-600 text-white shadow-md"
-                            : "bg-white text-gray-700 hover:bg-gray-100"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-white text-gray-700 hover:bg-gray-100"
                           }`}
                       >
                         Multiple Queues
@@ -670,10 +678,10 @@ export function CreateEventModal({
                                     value={
                                       queue.eventDateTime
                                         ? [
-                                            queue.eventDateTime.getFullYear(),
-                                            String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
-                                            String(queue.eventDateTime.getDate()).padStart(2, "0"),
-                                          ].join("-")
+                                          queue.eventDateTime.getFullYear(),
+                                          String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
+                                          String(queue.eventDateTime.getDate()).padStart(2, "0"),
+                                        ].join("-")
                                         : ""
                                     }
                                     onChange={(e) => {
@@ -706,15 +714,15 @@ export function CreateEventModal({
                                       const today = new Date();
                                       const currentDate = queue.eventDateTime
                                         ? [
-                                            queue.eventDateTime.getFullYear(),
-                                            String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
-                                            String(queue.eventDateTime.getDate()).padStart(2, "0"),
-                                          ].join("-")
+                                          queue.eventDateTime.getFullYear(),
+                                          String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
+                                          String(queue.eventDateTime.getDate()).padStart(2, "0"),
+                                        ].join("-")
                                         : [
-                                            today.getFullYear(),
-                                            String(today.getMonth() + 1).padStart(2, "0"),
-                                            String(today.getDate()).padStart(2, "0"),
-                                          ].join("-");
+                                          today.getFullYear(),
+                                          String(today.getMonth() + 1).padStart(2, "0"),
+                                          String(today.getDate()).padStart(2, "0"),
+                                        ].join("-");
                                       updated[index] = {
                                         ...queue,
                                         eventDateTime: e.target.value
