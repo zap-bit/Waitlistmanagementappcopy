@@ -25,7 +25,7 @@ import { toast } from "sonner";
 interface CreateEventModalProps {
   businessId: string;
   onClose: () => void;
-  onCreateEvent: (event: Event) => void;
+  onCreateEvent: (event: Event) => boolean | void;
   editEvent?: Event | null; // Optional event to edit
 }
 
@@ -206,7 +206,13 @@ export function CreateEventModal({
       } as TableBasedEvent;
     }
 
-    onCreateEvent(newEvent);
+    //onCreateEvent(newEvent);
+    // Capture the result of the creation/update logic from the parent
+    const isUpdateValid = onCreateEvent(newEvent);
+
+    // IF the parent returned false, it means validation failed.
+    // Stop here so the modal stays open and no success toast triggers.
+    if (isUpdateValid === false) return;
     if (editEvent) {
       posthog?.capture('event_updated', {
         event_id: newEvent.id,

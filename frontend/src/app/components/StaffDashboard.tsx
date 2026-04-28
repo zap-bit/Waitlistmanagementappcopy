@@ -1121,6 +1121,18 @@ export function StaffDashboard({
     if (newCount < 1 || newCount > 24) return;
 
     const oldCount = tables.length;
+    // 2. VALIDATION: Check for occupied tables in the range to be removed
+    if (newCount < oldCount) {
+      const occupiedTablesToDelete = tables.slice(newCount).filter(t => t.occupied);
+
+      if (occupiedTablesToDelete.length > 0) {
+        const tableNumbers = occupiedTablesToDelete.map(t => t.name).join(", ");
+        toast.error("Cannot remove tables", {
+          description: `${tableNumbers} ${occupiedTablesToDelete.length === 1 ? 'is' : 'are'} occupied. Clear them first.`
+        });
+        return; // EXIT EARLY: Prevents the state update
+      }
+    }
     const newTables = [...tables];
 
     if (newCount > oldCount) {
@@ -3170,6 +3182,24 @@ export function StaffDashboard({
             setEventToEdit(null);
           }}
           onCreateEvent={(event) => {
+            // 1. VALIDATION: Check if we are reducing tables that are currently occupied
+            if (event.type === 'table-based') {
+              const newTableCount = (event as any).numberOfTables || 0;
+              const currentTableCount = tables.length;
+
+              if (newTableCount < currentTableCount) {
+                // Check if any of the tables being removed are occupied
+                const occupiedTablesToDelete = tables.slice(newTableCount).filter(t => t.occupied);
+
+                if (occupiedTablesToDelete.length > 0) {
+                  const tableNumbers = occupiedTablesToDelete.map(t => t.name).join(", ");
+                  toast.error("Cannot reduce table count", {
+                    description: `The following tables are currently occupied: ${tableNumbers}. Please clear them before deleting.`
+                  });
+                  return false; // EXIT EARLY: This keeps the modal open and prevents the save
+                }
+              }
+            }
             setIsSyncing(true);
             // Update event in storage and sync to Supabase
             updateEventFull(event);
@@ -3235,7 +3265,6 @@ export function StaffDashboard({
                 }
               }
 
-              // Handle table-based events - resize tables if numberOfTables changed
               // Handle table-based events - resize and sync table capacity
               if (event.type === "table-based") {
                 const tableEvent = event as any;
@@ -3270,9 +3299,10 @@ export function StaffDashboard({
               }
             }
             setTimeout(() => setIsSyncing(false), 3000);
-            setShowEditEventModal(false);
-            setEventToEdit(null);
-            toast.success("Event updated successfully");
+            //setShowEditEventModal(false);
+            //setEventToEdit(null);
+            //toast.success("Event updated successfully");
+            return true; // Indicate success to close the modal
           }}
           editEvent={eventToEdit}
         />
