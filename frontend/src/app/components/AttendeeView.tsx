@@ -101,6 +101,9 @@ export function AttendeeView({
   useEffect(() => {
     let serverEvents: Event[] = [];
     const loadEvents = () => {
+      // If we are currently syncing an update, 
+      // don't let the background poll overwrite our local state.
+      if (isSyncing) return;
       const localEvents = getStoredEvents().filter(e => e.status === "active" && e.type !== "simple-capacity");
       const localIds = new Set(localEvents.map(e => e.id));
       const merged = [...localEvents, ...serverEvents.filter(e => !localIds.has(e.id))];
@@ -1240,30 +1243,30 @@ export function AttendeeView({
                     : null;
                   const visiblePastEvents = pastEvents.filter(e => e.id !== currentSessionId);
                   return visiblePastEvents.length > 0 ? (
-                  <div className="space-y-3">
-                    {visiblePastEvents.map((event) => (
-                      <div key={event.id} className="p-4 border-2 border-gray-200 rounded-xl bg-gray-50 opacity-75">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h4 className="font-semibold text-gray-800">{event.eventName}</h4>
-                            <p className="text-sm text-gray-600">{event.name}</p>
+                    <div className="space-y-3">
+                      {visiblePastEvents.map((event) => (
+                        <div key={event.id} className="p-4 border-2 border-gray-200 rounded-xl bg-gray-50 opacity-75">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <h4 className="font-semibold text-gray-800">{event.eventName}</h4>
+                              <p className="text-sm text-gray-600">{event.name}</p>
+                            </div>
+                            <div className="bg-gray-300 text-gray-700 text-xs font-semibold px-2 py-1 rounded">Seated</div>
                           </div>
-                          <div className="bg-gray-300 text-gray-700 text-xs font-semibold px-2 py-1 rounded">Seated</div>
-                        </div>
 
-                        <div className="flex items-center gap-4 text-sm text-gray-600">
-                          <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{event.partySize} {event.partySize === 1 ? "person" : "people"}</span></div>
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-4 h-4" />
-                            <span>{event.seatedAt.toLocaleDateString([], { month: "short", day: "numeric" })} at {event.seatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                          <div className="flex items-center gap-4 text-sm text-gray-600">
+                            <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{event.partySize} {event.partySize === 1 ? "person" : "people"}</span></div>
+                            <div className="flex items-center gap-1">
+                              <Calendar className="w-4 h-4" />
+                              <span>{event.seatedAt.toLocaleDateString([], { month: "short", day: "numeric" })} at {event.seatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500"><p className="text-sm">No past events yet</p></div>
-                );
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500"><p className="text-sm">No past events yet</p></div>
+                  );
                 })()}
               </div>
             </div>
