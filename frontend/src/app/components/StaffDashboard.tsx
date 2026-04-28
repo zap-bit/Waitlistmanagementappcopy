@@ -1364,10 +1364,12 @@ export function StaffDashboard({
                       : event.type === "simple-capacity"
                         ? "green"
                         : "purple";
-                  const TypeIcon =
+                  const typeIconSrc =
                     event.type === "capacity-based"
-                      ? Users
-                      : Users;
+                      ? "/queue.jpeg"
+                      : event.type === "simple-capacity"
+                        ? "/attendance.jpeg"
+                        : "/table.jpeg";
 
                   const currentCount =
                     event.type === "capacity-based"
@@ -1566,10 +1568,12 @@ export function StaffDashboard({
                         <div className="flex items-center gap-6">
                           {/* Icon */}
                           <div
-                            className={`w-16 h-16 bg-${typeColor}-100 rounded-xl flex items-center justify-center group-hover:bg-${typeColor}-500 transition-colors flex-shrink-0`}
+                            className={`w-16 h-16 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden`}
                           >
-                            <TypeIcon
-                              className={`w-8 h-8 text-${typeColor}-600 group-hover:text-white transition-colors`}
+                            <img
+                              src={typeIconSrc}
+                              alt={event.type}
+                              className="w-full h-full object-cover"
                             />
                           </div>
 
@@ -1667,7 +1671,12 @@ export function StaffDashboard({
                       : event.type === "simple-capacity"
                         ? "green"
                         : "purple";
-                  const TypeIcon = Users;
+                  const typeIconSrc =
+                    event.type === "capacity-based"
+                      ? "/queue.jpeg"
+                      : event.type === "simple-capacity"
+                        ? "/attendance.jpeg"
+                        : "/table.jpeg";
 
                   const currentCount =
                     event.type === "capacity-based"
@@ -1749,10 +1758,12 @@ export function StaffDashboard({
                       {/* Horizontal layout for content */}
                       <div className="flex items-center gap-6 mb-5">
                         <div
-                          className={`w-16 h-16 bg-${typeColor}-100 rounded-xl flex items-center justify-center flex-shrink-0`}
+                          className="w-16 h-16 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden"
                         >
-                          <TypeIcon
-                            className={`w-8 h-8 text-${typeColor}-600`}
+                          <img
+                            src={typeIconSrc}
+                            alt={event.type}
+                            className="w-full h-full object-cover"
                           />
                         </div>
 
