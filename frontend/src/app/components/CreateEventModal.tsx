@@ -8,6 +8,7 @@ import {
   generateEventCode,
 } from "../utils/events";
 import { useState, useEffect } from "react";
+import { usePostHog } from '@posthog/react';
 import {
   X,
   Users,
@@ -34,6 +35,7 @@ export function CreateEventModal({
   onCreateEvent,
   editEvent,
 }: CreateEventModalProps) {
+  const posthog = usePostHog();
   const [step, setStep] = useState<"type" | "details">("type");
   const [eventType, setEventType] = useState<EventType | null>(
     null,
@@ -204,6 +206,19 @@ export function CreateEventModal({
     }
 
     onCreateEvent(newEvent);
+    if (editEvent) {
+      posthog?.capture('event_updated', {
+        event_id: newEvent.id,
+        event_type: newEvent.type,
+        is_public: newEvent.isPublic,
+      });
+    } else {
+      posthog?.capture('event_created', {
+        event_id: newEvent.id,
+        event_type: newEvent.type,
+        is_public: newEvent.isPublic,
+      });
+    }
     const modeText =
       eventType === "capacity-based" && queueMode === "multiple"
         ? ` with ${queues.length} queues`

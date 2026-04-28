@@ -23,6 +23,8 @@ class Settings:
 
     supabase_url: str = os.getenv("SUPABASE_URL", "")
     supabase_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    posthog_api_key: str = os.getenv("POSTHOG_API_KEY", "")
+    posthog_host: str = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
 
 
 settings = Settings()

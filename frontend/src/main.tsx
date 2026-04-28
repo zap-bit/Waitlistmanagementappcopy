@@ -1,7 +1,20 @@
+console.log('main.tsx is running')
+console.log('PostHog key:', import.meta.env.VITE_POSTHOG_KEY)
 
-  import { createRoot } from "react-dom/client";
-  import App from "./app/App.tsx";
-  import "./styles/index.css";
 
-  createRoot(document.getElementById("root")!).render(<App />);
-  
+import { createRoot } from "react-dom/client";  
+import App from "./app/App.tsx";  
+import "./styles/index.css";  
+import posthog from 'posthog-js';  
+import { PostHogProvider } from '@posthog/react';
+
+posthog.init(import.meta.env.VITE_POSTHOG_KEY, {  
+  api_host: import.meta.env.VITE_POSTHOG_HOST,  
+  defaults: '2026-01-30',  
+});
+
+createRoot(document.getElementById("root")!).render(  
+  <PostHogProvider client={posthog}>  
+    <App />  
+  </PostHogProvider>  
+);  

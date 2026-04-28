@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { usePostHog } from '@posthog/react';
 import { StaffDashboard } from './components/StaffDashboard';
 import { AttendeeView } from './components/AttendeeView';
 import { Welcome } from './components/Welcome';
@@ -106,6 +107,8 @@ export default function App() {
   const [splashVideoEnded, setSplashVideoEnded] = useState(false);
   const [splashDataReady, setSplashDataReady] = useState(false);
 
+  const posthog = usePostHog();
+
   // Stable ref so the online handler can call setWaitlist without being in its dep array
   const setWaitlistRef = useRef(setWaitlist);
 
@@ -187,6 +190,8 @@ export default function App() {
   }, [tables]);
 
   const handleLogout = () => {
+    posthog?.capture('user_logged_out');
+    posthog?.reset();
     setSelectedRole(null);
     authLogout();
     setUser(null);
@@ -254,6 +259,12 @@ export default function App() {
     localStorage.removeItem("businessesDb");
     const loggedInUser = await authLogin(email, password);
     if (loggedInUser) {
+      posthog?.identify(loggedInUser.id, {
+        email: loggedInUser.email,
+        name: loggedInUser.name,
+        role: loggedInUser.role,
+      });
+      posthog?.capture('user_logged_in', { role: loggedInUser.role });
       setUser(loggedInUser);
       setSelectedRole(loggedInUser.role === 'staff' ? 'staff' : 'attendee');
       setAuthScreen(null);
@@ -269,6 +280,12 @@ export default function App() {
   const handleSignupUser = async (email: string, password: string, name: string) => {
     const newUser = await authSignupUser(email, password, name);
     if (newUser) {
+      posthog?.identify(newUser.id, {
+        email: newUser.email,
+        name: newUser.name,
+        role: newUser.role,
+      });
+      posthog?.capture('user_signed_up', { account_type: 'user' });
       setUser(newUser);
       setSelectedRole('attendee');
       setAuthScreen(null);
@@ -284,6 +301,13 @@ export default function App() {
   const handleSignupBusiness = async (email: string, password: string, ownerName: string, businessName: string) => {
     const newUser = await authSignupBusiness(email, password, ownerName, businessName);
     if (newUser) {
+      posthog?.identify(newUser.id, {
+        email: newUser.email,
+        name: newUser.name,
+        role: newUser.role,
+        business_id: newUser.businessId,
+      });
+      posthog?.capture('user_signed_up', { account_type: 'business', business_name: businessName });
       setUser(newUser);
       setSelectedRole('staff');
       setAuthScreen(null);
@@ -341,6 +365,13 @@ export default function App() {
       reservationTime,
     };
     setWaitlist((prev) => [...prev, newEntry]);
+    posthog?.capture('waitlist_joined', {
+      entry_type: type,
+      event_id: eventId,
+      queue_id: queueId,
+      party_size: partySize,
+      estimated_wait: Math.round(estimatedWait),
+    });
 
     if (eventId) {
       const token = localStorage.getItem('authToken');
@@ -374,6 +405,10 @@ export default function App() {
 
   const removeFromWaitlist = (id: string) => {
     const entry = waitlist.find(e => e.id === id);
+    posthog?.capture('waitlist_left', {
+      entry_type: entry?.type,
+      event_id: entry?.eventId,
+    });
     setWaitlist((prev) => prev.filter((e) => e.id !== id));
 
     if (entry?.eventId) {

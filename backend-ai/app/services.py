@@ -265,7 +265,7 @@ def update_event_service_time(event_id: str):
     ).eq("uuid", event_id).execute()
 
 
-def mark_no_show(event_id: str, entry_id: str) -> WaitlistEntry:
+def mark_no_show(event_id: str, entry_id: str, posthog_client=None) -> WaitlistEntry:
     entry = get_waitlist_entry(event_id, entry_id)
     old_position = entry.position
 
@@ -288,10 +288,28 @@ def mark_no_show(event_id: str, entry_id: str) -> WaitlistEntry:
 
     _reorder_positions(event_id, old_position)
 
-    return WaitlistEntry.model_validate(response.data[0])
+    result = WaitlistEntry.model_validate(response.data[0])
+
+    if posthog_client is not None:
+        from posthog import new_context, identify_context
+        with new_context():
+            identify_context("staff-anonymous")
+            posthog_client.capture(
+                "guest marked no show",
+                distinct_id="staff-anonymous",
+                properties={
+                    "event_id": event_id,
+                    "entry_id": entry_id,
+                    "party_size": result.party_size,
+                    "entry_type": result.type,
+                    "queue_position": old_position,
+                },
+            )
+
+    return result
 
 
-def promote(event_id: str, payload: PromoteRequest) -> dict:
+def promote(event_id: str, payload: PromoteRequest, posthog_client=None) -> dict:
     query = (
         supabase.table("party")
         .select("*")
@@ -323,10 +341,24 @@ def promote(event_id: str, payload: PromoteRequest) -> dict:
         )
         updated_list.append(WaitlistEntry.model_validate(upd.data[0]))
 
+    if posthog_client is not None:
+        from posthog import new_context, identify_context
+        with new_context():
+            identify_context("staff-anonymous")
+            posthog_client.capture(
+                "guest promoted",
+                distinct_id="staff-anonymous",
+                properties={
+                    "event_id": event_id,
+                    "promoted_count": len(updated_list),
+                    "filter_type": payload.type.value if payload.type else None,
+                },
+            )
+
     return {"promoted": updated_list, "count": len(updated_list)}
 
 
-def seat(event_id: str, payload: SeatRequest) -> WaitlistEntry:
+def seat(event_id: str, payload: SeatRequest, posthog_client=None) -> WaitlistEntry:
     entry = get_waitlist_entry(event_id, payload.entryId)
     old_position = entry.position
 
@@ -348,7 +380,25 @@ def seat(event_id: str, payload: SeatRequest) -> WaitlistEntry:
 
     update_event_service_time(event_id)
 
-    return WaitlistEntry.model_validate(response.data[0])
+    result = WaitlistEntry.model_validate(response.data[0])
+
+    if posthog_client is not None:
+        from posthog import new_context, identify_context
+        with new_context():
+            identify_context("staff-anonymous")
+            posthog_client.capture(
+                "guest seated",
+                distinct_id="staff-anonymous",
+                properties={
+                    "event_id": event_id,
+                    "entry_id": payload.entryId,
+                    "party_size": result.party_size,
+                    "entry_type": result.type,
+                    "queue_position": old_position,
+                },
+            )
+
+    return result
 
 
 def get_waitlist_entry(event_id: str, entry_id: str) -> WaitlistEntry:
@@ -390,7 +440,7 @@ def _reorder_positions(event_id: str, removed_position: int):
         pass
 
 
-def create_event(payload: EventCreate) -> Event:
+def create_event(payload: EventCreate, posthog_client=None) -> Event:
     try:
         BUSINESS_ACCOUNT_ID = "4453668f-9e6a-4b9f-8828-c6ab56335597"
 
@@ -426,7 +476,24 @@ def create_event(payload: EventCreate) -> Event:
             )
 
         response = supabase.table("events").insert(event_data).execute()
-        return Event.model_validate(response.data[0])
+        result = Event.model_validate(response.data[0])
+
+        if posthog_client is not None:
+            from posthog import new_context, identify_context
+            with new_context():
+                identify_context("staff-anonymous")
+                posthog_client.capture(
+                    "event created",
+                    distinct_id="staff-anonymous",
+                    properties={
+                        "event_id": result.uuid,
+                        "event_type": payload.event_type,
+                        "queue_capacity": payload.queue_capacity,
+                        "num_tables": payload.num_tables,
+                    },
+                )
+
+        return result
 
     except SupabaseAPIError as e:
         raise ApiError(500, "DATABASE_ERROR", str(e))
@@ -455,7 +522,13 @@ def get_event(event_id: str) -> Event:
         )
 
 
-def add_waitlist_entry(event_id: str, payload: WaitlistCreate) -> WaitlistEntry:
+def add_waitlist_entry(
+    event_id: str,
+    payload: WaitlistCreate,
+    posthog_client=None,
+    distinct_id: str | None = None,
+    session_id: str | None = None,
+) -> WaitlistEntry:
     try:
         event = get_event(event_id)
 
@@ -506,7 +579,29 @@ def add_waitlist_entry(event_id: str, payload: WaitlistCreate) -> WaitlistEntry:
 
         supabase.table("table_queue").insert(queue_data).execute()
 
-        return WaitlistEntry.model_validate(new_party_data)
+        result = WaitlistEntry.model_validate(new_party_data)
+
+        if posthog_client is not None:
+            from posthog import new_context, identify_context, set_context_session
+            effective_distinct_id = distinct_id or party_uuid
+            with new_context():
+                identify_context(effective_distinct_id)
+                if session_id:
+                    set_context_session(session_id)
+                posthog_client.capture(
+                    "waitlist joined",
+                    distinct_id=effective_distinct_id,
+                    properties={
+                        "event_id": event_id,
+                        "entry_id": party_uuid,
+                        "party_size": payload.party_size,
+                        "entry_type": payload.type.value if hasattr(payload.type, "value") else str(payload.type),
+                        "queue_position": new_position,
+                        "estimated_wait_minutes": est_wait,
+                    },
+                )
+
+        return result
 
     except Exception as e:
         raise ApiError(500, "DATABASE_ERROR", f"Waitlist Entry Failed: {str(e)}")
