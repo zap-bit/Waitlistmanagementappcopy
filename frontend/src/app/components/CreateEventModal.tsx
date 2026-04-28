@@ -119,14 +119,39 @@ export function CreateEventModal({
       return;
     }
 
+    // --- NEW: Occupancy Validation for Table-Based Events ---
+    if (eventType === "table-based" && editEvent) {
+      const newTableCount = parseInt(numberOfTables) || 0;
+
+      // Look at the locally stored tables for this specific event
+      const savedTablesRaw = localStorage.getItem(`tables_${editEvent.id}`);
+      if (savedTablesRaw) {
+        const currentTables = JSON.parse(savedTablesRaw);
+
+        // Find tables that would be removed (ID > the new count)
+        const tablesToRemove = currentTables.filter((t: any) => t.id > newTableCount);
+        const occupiedInRemovedRange = tablesToRemove.filter((t: any) => t.occupied);
+
+        if (occupiedInRemovedRange.length > 0) {
+          const names = occupiedInRemovedRange.map((t: any) => t.name).join(", ");
+          toast.error("Cannot reduce table count", {
+            description: `The following tables are currently occupied: ${names}. Please clear them before updating the event.`,
+            duration: 6000,
+          });
+          return; // EXIT: This keeps the modal open and prevents the success toast
+        }
+      }
+    }
+    // -------------------------------------------------------
+
     const baseEvent = {
       id: editEvent?.id || `event-${Date.now()}`,
       businessId,
       name: eventName,
       createdAt: editEvent?.createdAt || new Date(),
       status: (editEvent?.status || "active") as const,
-      isPublic, // Add the public/private flag
-      eventCode: editEvent?.eventCode || generateEventCode(), // Generate or preserve event code
+      isPublic,
+      eventCode: editEvent?.eventCode || generateEventCode(),
     };
 
     let newEvent: Event;
@@ -138,7 +163,6 @@ export function CreateEventModal({
       }
 
       if (queueMode === "multiple") {
-        // Validate multiple queues
         if (queues.length === 0) {
           toast.error("Please add at least one queue");
           return;
@@ -153,19 +177,12 @@ export function CreateEventModal({
         ...baseEvent,
         type: "capacity-based",
         queueMode,
-        capacity:
-          queueMode === "single"
-            ? parseInt(capacity) || 100
-            : 0,
-        estimatedWaitPerPerson:
-          parseInt(estimatedWaitPerPerson) || 5,
+        capacity: queueMode === "single" ? parseInt(capacity) || 100 : 0,
+        estimatedWaitPerPerson: parseInt(estimatedWaitPerPerson) || 5,
         location,
         currentCount: 0,
         queues: queueMode === "multiple" ? queues : undefined,
-        eventDateTime:
-          eventDate && eventStartTime
-            ? new Date(`${eventDate}T${eventStartTime}:00`)
-            : undefined,
+        eventDateTime: eventDate && eventStartTime ? new Date(`${eventDate}T${eventStartTime}:00`) : undefined,
       } as CapacityBasedEvent;
     } else if (eventType === "simple-capacity") {
       if (!location.trim()) {
@@ -177,14 +194,10 @@ export function CreateEventModal({
         ...baseEvent,
         type: "simple-capacity",
         capacity: parseInt(capacity) || 100,
-        estimatedWaitPerPerson:
-          parseInt(estimatedWaitPerPerson) || 5,
+        estimatedWaitPerPerson: parseInt(estimatedWaitPerPerson) || 5,
         location,
         currentCount: 0,
-        eventDateTime:
-          eventDate && eventStartTime
-            ? new Date(`${eventDate}T${eventStartTime}:00`)
-            : undefined,
+        eventDateTime: eventDate && eventStartTime ? new Date(`${eventDate}T${eventStartTime}:00`) : undefined,
       } as SimpleCapacityEvent;
     } else {
       newEvent = {
@@ -192,25 +205,16 @@ export function CreateEventModal({
         type: "table-based",
         numberOfTables: parseInt(numberOfTables) || 12,
         averageTableSize: parseInt(averageTableSize) || 4,
-        reservationDuration:
-          parseInt(reservationDuration) || 90,
+        reservationDuration: parseInt(reservationDuration) || 90,
         noShowPolicy,
-        currentFilledTables: 0,
-        eventDateTime:
-          eventDate && eventStartTime
-            ? new Date(`${eventDate}T${eventStartTime}:00`)
-            : undefined,
+        currentFilledTables: editEvent ? (editEvent as TableBasedEvent).currentFilledTables : 0,
+        eventDateTime: eventDate && eventStartTime ? new Date(`${eventDate}T${eventStartTime}:00`) : undefined,
       } as TableBasedEvent;
     }
 
     onCreateEvent(newEvent);
-    const modeText =
-      eventType === "capacity-based" && queueMode === "multiple"
-        ? ` with ${queues.length} queues`
-        : "";
-    toast.success(
-      `Event "${eventName}"${modeText} ${editEvent ? "updated" : "created"} successfully!`,
-    );
+    const modeText = eventType === "capacity-based" && queueMode === "multiple" ? ` with ${queues.length} queues` : "";
+    toast.success(`Event "${eventName}"${modeText} ${editEvent ? "updated" : "created"} successfully!`);
     onClose();
   };
 
@@ -388,8 +392,8 @@ export function CreateEventModal({
                   >
                     <span
                       className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${isPublic
-                          ? "translate-x-7"
-                          : "translate-x-1"
+                        ? "translate-x-7"
+                        : "translate-x-1"
                         }`}
                     />
                   </button>
@@ -419,8 +423,8 @@ export function CreateEventModal({
                         type="button"
                         onClick={() => setQueueMode("single")}
                         className={`flex-1 py-3 px-4 rounded-lg font-medium transition-all ${queueMode === "single"
-                            ? "bg-blue-600 text-white shadow-md"
-                            : "bg-white text-gray-700 hover:bg-gray-100"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-white text-gray-700 hover:bg-gray-100"
                           }`}
                       >
                         Single Queue
@@ -429,8 +433,8 @@ export function CreateEventModal({
                         type="button"
                         onClick={() => setQueueMode("multiple")}
                         className={`flex-1 py-3 px-4 rounded-lg font-medium transition-all ${queueMode === "multiple"
-                            ? "bg-blue-600 text-white shadow-md"
-                            : "bg-white text-gray-700 hover:bg-gray-100"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-white text-gray-700 hover:bg-gray-100"
                           }`}
                       >
                         Multiple Queues
@@ -655,10 +659,10 @@ export function CreateEventModal({
                                     value={
                                       queue.eventDateTime
                                         ? [
-                                            queue.eventDateTime.getFullYear(),
-                                            String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
-                                            String(queue.eventDateTime.getDate()).padStart(2, "0"),
-                                          ].join("-")
+                                          queue.eventDateTime.getFullYear(),
+                                          String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
+                                          String(queue.eventDateTime.getDate()).padStart(2, "0"),
+                                        ].join("-")
                                         : ""
                                     }
                                     onChange={(e) => {
@@ -691,15 +695,15 @@ export function CreateEventModal({
                                       const today = new Date();
                                       const currentDate = queue.eventDateTime
                                         ? [
-                                            queue.eventDateTime.getFullYear(),
-                                            String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
-                                            String(queue.eventDateTime.getDate()).padStart(2, "0"),
-                                          ].join("-")
+                                          queue.eventDateTime.getFullYear(),
+                                          String(queue.eventDateTime.getMonth() + 1).padStart(2, "0"),
+                                          String(queue.eventDateTime.getDate()).padStart(2, "0"),
+                                        ].join("-")
                                         : [
-                                            today.getFullYear(),
-                                            String(today.getMonth() + 1).padStart(2, "0"),
-                                            String(today.getDate()).padStart(2, "0"),
-                                          ].join("-");
+                                          today.getFullYear(),
+                                          String(today.getMonth() + 1).padStart(2, "0"),
+                                          String(today.getDate()).padStart(2, "0"),
+                                        ].join("-");
                                       updated[index] = {
                                         ...queue,
                                         eventDateTime: e.target.value
