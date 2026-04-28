@@ -1,5 +1,3 @@
-console.log('main.tsx is running')
-console.log('PostHog key:', import.meta.env.VITE_POSTHOG_KEY)
 
 
 import { createRoot } from "react-dom/client";  
