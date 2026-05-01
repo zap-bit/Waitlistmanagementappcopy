@@ -1297,7 +1297,7 @@ export function AttendeeView({
                             </div>
 
                             <div className="flex items-center gap-4 text-sm text-gray-600">
-                              <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{event.partySize} {event.partySize === 1 ? "person" : "people"}</span></div>
+                              <div className="flex items-center gap-1"><Users className="w-4 h-4" /><span>{event.partySize} {event.partySize === 1 ? "party" : "people"}</span></div>
                               <div className="flex items-center gap-1">
                                 <Calendar className="w-4 h-4" />
                                 <span>{event.seatedAt.toLocaleDateString([], { month: "short", day: "numeric" })} at {event.seatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
