@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { ApiError } from '../middleware/error.js';
 import { supabase } from '../lib/supabase.js';
+import { calculateHeuristicWait } from '../services/waitlistLogic.js';
 
 export const waitlistRouter = Router({ mergeParams: true });
 
@@ -69,6 +70,20 @@ waitlistRouter.post('/', async (req, res, next) => {
   if (error) return next(new ApiError(400, 'INVALID_INPUT', error.message));
 
   return res.status(201).json(data);
+});
+
+waitlistRouter.get('/estimate', async (req, res, next) => {
+  const eventId = req.params.eventId;
+
+  if (!eventId) {
+    return next(
+      new ApiError(400, 'INVALID_INPUT', 'eventId is required')
+    );
+  }
+
+  const result = await calculateHeuristicWait(eventId);
+
+  return res.json(result);
 });
 
 waitlistRouter.get('/:entryId', async (req, res, next) => {
