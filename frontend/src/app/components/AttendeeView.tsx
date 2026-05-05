@@ -9,9 +9,8 @@ import { WaitlistEntry } from "../App";
 import { getStoredEvents, Event, CapacityBasedEvent, TableBasedEvent, Queue } from "../utils/events";
 import { Profile, getSavedProfile } from "./Profile";
 import { User } from "../utils/auth";
-import { calculateDynamicWaitTime, fetchPredictedWait } from "../utils/waitTime";
+import { calculateDynamicWaitTime, fetchPredictedWait} from "../utils/waitTime";
 import { Table } from "./TableGrid";
-
 interface AttendeeViewProps {
   onLogout: () => void;
   waitlist: WaitlistEntry[];
@@ -47,6 +46,7 @@ export function AttendeeView({
   const [showProfile, setShowProfile] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showMyEvents, setShowMyEvents] = useState(false);
+  const [backendWaitMap, setBackendWaitMap] = useState<Record<string, number>>({});
 
   // RESTORED: Info about a table the user is currently seated at
   interface SeatedTableInfo {
@@ -271,28 +271,57 @@ export function AttendeeView({
   const sameTypeAndEventEntries = myEntry ? allWaitlistEntries.filter(e => e.type === myEntry.type && e.eventId === myEntry.eventId) : [];
   const position = myEntry?.position ?? (myEntry ? sameTypeAndEventEntries.findIndex(e => e.id === selectedWaitlistId) + 1 : 0);
 
-  const [estimatedWaitMinutes, setEstimatedWaitMinutes] = useState(myEntry ? calculateDynamicWaitTime(myEntry, allWaitlistEntries) : 0);
+  const [estimatedWaitMinutes, setEstimatedWaitMinutes] = useState(0);
+  const [queueSizeMap, setQueueSizeMap] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    if (!myEntry) return;
-    const event = availableEvents.find(e => e.id === myEntry.eventId);
-    if (event && event.type === 'capacity-based') {
-      setEstimatedWaitMinutes(calculateDynamicWaitTime(myEntry, allWaitlistEntries));
-    }
-  }, [myEntry, allWaitlistEntries, availableEvents]);
+    const eventId = myEntry?.eventId;
 
-  useEffect(() => {
-    if (!myEntry?.eventId) return;
-    fetchPredictedWait(myEntry.eventId).then(mins => {
-      if (mins !== null) setEstimatedWaitMinutes(mins);
-    });
-    const interval = setInterval(() => {
-      fetchPredictedWait(myEntry.eventId).then(mins => {
-        if (mins !== null) setEstimatedWaitMinutes(mins);
-      });
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [myEntry?.eventId]);
+    if (!eventId || !myEntry) return;
+
+    const backendWait = backendWaitMap[eventId];
+    const queueSize = queueSizeMap[eventId];
+
+    if (backendWait == null || queueSize == null) return;
+
+    const backendResponse =
+      backendWait != null && queueSize != null
+        ? { estimatedWait: backendWait, queueSize }
+        : null;
+
+    const result = calculateDynamicWaitTime(myEntry, backendResponse);
+
+    setEstimatedWaitMinutes(result);
+  }, [myEntry, backendWaitMap, queueSizeMap]);
+
+useEffect(() => {
+  const eventId = myEntry?.eventId;
+
+  if (!eventId || !myEntry) return;
+
+  const run = async () => {
+    const res = await fetchPredictedWait(eventId);
+
+    if (res === null) return;
+
+    const { estimatedWait, queueSize } = res;
+
+    setBackendWaitMap(prev => ({
+      ...prev,
+      [eventId]: estimatedWait,
+    }));
+
+    setQueueSizeMap(prev => ({
+      ...prev,
+      [eventId]: queueSize,
+    }));
+  };
+
+  run();
+
+  const interval = setInterval(run, 30000);
+  return () => clearInterval(interval);
+}, [myEntry?.eventId]);
 
   const getQueueStats = () => {
     if (!selectedEvent) return { current: 0, max: 0 };
