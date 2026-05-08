@@ -694,6 +694,3 @@ If a situation is not covered by this spec, apply these rules in order:
 4. Leave a comment explaining your choice.
 
 ---
-
-*End of Specification — Waitlist Management App v1.0*
-*Generated May 2026 from codebase analysis.*
